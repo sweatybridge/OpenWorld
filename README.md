@@ -308,6 +308,28 @@ SELECT attobot.ensure_agent_cron_loop(
 );
 ```
 
+## Dashboard
+
+A read-only admin dashboard for pg_durable workflows and the attobot domain ships as
+the `dashboard` compose service. It connects to Postgres as a dedicated
+`attobot_dashboard` role that is `BYPASSRLS` (so it can see every agent's workflows
+and data) but has **only `SELECT`/`EXECUTE`** privileges — writes fail at the
+database, so the console is view-only even if its API layer had a bug. The role is
+created by `agent-init` from `dashboard/dashboard-role.sql` on every seed run.
+
+```bash
+docker compose up -d
+```
+
+The console is then at <http://127.0.0.1:8088> (bound to host loopback only).
+`ATTOBOT_DASHBOARD_DB_PASSWORD` (default `dashboard`) sets the role password; set
+`ATTOBOT_DASHBOARD_TOKEN` to require `Authorization: Bearer <token>` on every API
+request. Tabs: Overview (`df.metrics`, worker heartbeat), Workflows (instances with
+labels parsed into loop/inbox/cron/send/tool/typing, plus a detail view with the
+node graph, execution history, and `df.explain`), Agents, Messages, Memory, Users,
+Lifecycle, Config, and Blobs. Secrets in `attobot.config` are redacted server-side
+— use `psql` to read real values.
+
 ## Tables
 
 - `attobot.agents`: one row per agent.

@@ -27,6 +27,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./agents.sql:/attobot/agents.sql:ro
+      - ./dashboard/dashboard-role.sql:/attobot/dashboard-role.sql:ro
     command:
       - psql
       - --no-psqlrc
@@ -45,7 +46,40 @@ services:
       - --set=telegram_thread_id=${ATTOBOT_TELEGRAM_THREAD_ID:-}
       - --set=telegram_api_base=${ATTOBOT_TELEGRAM_API_BASE:-https://api.telegram.org}
       - --set=telegram_poll_timeout=${ATTOBOT_TELEGRAM_POLL_TIMEOUT:-60}
+      - --set=dashboard_db_password=${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
       - --file=/attobot/agents.sql
+      - --file=/attobot/dashboard-role.sql
+
+  # Read-only admin dashboard for pg_durable workflows + attobot domain.
+  # View-only: the attobot_dashboard DB role has only SELECT/EXECUTE grants, so
+  # writes fail at the database even if the API layer had a bug.
+  dashboard:
+    build:
+      context: ./dashboard
+    depends_on:
+      harness:
+        condition: service_healthy
+      agent-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      PGHOST: harness
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-postgres}
+      PGUSER: attobot_dashboard
+      PGPASSWORD: ${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
+      PORT: 8088
+      # Set ATTOBOT_DASHBOARD_TOKEN to require `Authorization: Bearer <token>`.
+      # Host exposure is always restricted to loopback by the port mapping below.
+      DASHBOARD_TOKEN: ${ATTOBOT_DASHBOARD_TOKEN:-}
+    ports:
+      - "127.0.0.1:8088:8088"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8088/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 volumes:
   attobot_pgdata:

@@ -1,0 +1,51 @@
+-- ============================================================================
+-- Read-only dashboard role for the attobot admin dashboard.
+-- Run by the `agent-init` one-shot job (as the `postgres` superuser) on every
+-- seed run, exactly like the api-key / telegram seeding in agents.sql.
+--   --set=dashboard_db_password=...
+--   --file=/attobot/dashboard-role.sql
+--
+-- pg_durable hides other users' instances behind RLS (a normal role only sees
+-- instances it submitted). The dashboard needs to see *all* workflows and *all*
+-- agents' data, so the role is BYPASSRLS — the same pattern already used for
+-- attobot_service in 40-attobot-rbac.sql. Crucially it gets ONLY SELECT/EXECUTE:
+-- no INSERT/UPDATE/DELETE/USAGE-on-sequences, so it is read-only at the database
+-- even if the API layer had a bug.
+-- Idempotent and safe to re-run.
+-- ============================================================================
+
+-- 1. Create the login role (BYPASSRLS so it sees every df instance + attobot row).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'attobot_dashboard') THEN
+    CREATE ROLE attobot_dashboard LOGIN BYPASSRLS;
+  END IF;
+END $$;
+
+-- (Re)set the password each run, like the agents seed re-applies config.
+ALTER ROLE attobot_dashboard PASSWORD :'dashboard_db_password';
+
+-- 2. df privileges: USAGE on the df schema, EXECUTE on the read/monitoring
+--    functions (list_instances, instance_info, instance_nodes, instance_executions,
+--    metrics, status, result, explain), and SELECT on df.instances + df.nodes.
+--    BYPASSRLS makes all rows visible despite per-user RLS.
+SELECT df.grant_usage('attobot_dashboard');
+
+-- 3. Read access to the attobot domain. RLS is ENABLED but not FORCE on these
+--    tables, and BYPASSRLS bypasses it anyway — but the SELECT privilege is still
+--    required. No write/sequence privileges are granted.
+GRANT USAGE ON SCHEMA attobot, attotools TO attobot_dashboard;
+GRANT SELECT
+  ON attobot.agents, attobot.models, attobot.config, attobot.messages,
+     attobot.memory, attobot.memory_sources, attobot.lifecycle, attobot.users,
+     attotools.blobs
+  TO attobot_dashboard;
+
+-- 4. Worker-liveness table (internal; may or may not be covered by grant_usage).
+--    Tolerate absence so a future schema change can't break the seed job.
+DO $$
+BEGIN
+  GRANT SELECT ON df._worker_epoch TO attobot_dashboard;
+EXCEPTION
+  WHEN undefined_table THEN NULL;
+END $$;
