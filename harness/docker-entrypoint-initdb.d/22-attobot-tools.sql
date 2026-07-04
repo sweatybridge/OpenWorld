@@ -346,13 +346,15 @@ $$;
 COMMENT ON FUNCTION attotools._tool_sql(text) IS 'Run one semicolon-free SQL query inside PostgreSQL. The query must return rows. For writes, use a data-modifying CTE with RETURNING.';
 
 -- BASH: run a shell command on a remote host registered in ssh.hosts (the pg_ssh
--- catalog). ssh.ssh_exec is SECURITY DEFINER, owned by the postgres superuser
+-- catalog). ssh.exec is SECURITY DEFINER, owned by the postgres superuser
 -- that ran CREATE EXTENSION, with EXECUTE granted to PUBLIC by default, so the
 -- acting role can call it with no extra grants. The PEM keys never leave
 -- ssh.hosts (superuser-only); the operator registers hosts and pins host-key
 -- fingerprints out of band, and can REVOKE EXECUTE FROM PUBLIC to restrict which
--- roles may run remote commands. On connection/auth failure ssh_exec raises,
--- which run_tool_call_as_role turns into an 'error: ...' result.
+-- roles may run remote commands. ssh.exec returns stdout/stderr as bytea
+-- (binary-safe); we decode them as UTF-8 here since BASH output is text. On
+-- connection/auth failure ssh.exec raises, which run_tool_call_as_role turns
+-- into an 'error: ...' result.
 CREATE OR REPLACE FUNCTION attotools._tool_bash(
   p_host text,
   p_command text
@@ -375,9 +377,11 @@ BEGIN
     RAISE EXCEPTION 'BASH requires command';
   END IF;
 
-  SELECT stdout, stderr, exit_code
+  -- ssh.exec returns TABLE(stdout bytea, stderr bytea, exit_code int); decode
+  -- the streams as UTF-8 to keep the text-typed locals (and JSON result) honest.
+  SELECT convert_from(stdout, 'UTF8'), convert_from(stderr, 'UTF8'), exit_code
     INTO v_stdout, v_stderr, v_exit
-  FROM ssh.ssh_exec(v_host, v_command);
+  FROM ssh.exec(v_host, v_command);
 
   RETURN jsonb_build_object(
     'host', v_host,

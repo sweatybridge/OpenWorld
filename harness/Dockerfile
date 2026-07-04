@@ -6,13 +6,13 @@ ARG PG_DURABLE_VERSION=0.2.3
 ARG PG_DURABLE_REPO=sweatybridge/pg_durable
 ARG PG_DURABLE_SHA256=e247c3995ba3b8e1537f5f0a30ccef107054b3f0044d380e6c67fa18e4052370
 
-ARG PG_SSH_VERSION=0.1.0
+ARG PG_SSH_VERSION=0.3.0
 ARG PG_SSH_REPO=sweatybridge/pg_ssh
-ARG PG_SSH_SHA256=eea4865d29486eb0265015d189bcfe0f9691a8d5a3b7d93468329c8430d9a39c
+ARG PG_SSH_SHA256=0d641c13f50555b40c19d986745cc9114c3453bca3e7aac08c57b196147d7a84
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl openssh-client; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
     # Download pg_durable package
     deb="pg-durable-postgresql-${PG_MAJOR}_${PG_DURABLE_VERSION}-1_${TARGETARCH}.deb"; \
     curl -fsSL \

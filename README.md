@@ -109,22 +109,23 @@ SELECT * FROM ins
 ```
 
 `BASH` runs a shell command on a remote host over SSH via the `pg_ssh`
-extension's `ssh.ssh_exec(host_name, command)`. Hosts are pre-registered by a
+extension's `ssh.exec(host_name, command)`, which returns `stdout`/`stderr` as
+`bytea` (decoded as UTF-8 for the tool result). Hosts are pre-registered by a
 superuser in `ssh.hosts`, which keeps PEM private keys in memory only and is
-locked to its owner. `ssh_exec` is `SECURITY DEFINER`, owned by `postgres`, with
-`EXECUTE` granted to `PUBLIC` by default, so the acting role can call it without
-extra grants and never sees the keys; run `REVOKE EXECUTE ON FUNCTION
-ssh.ssh_exec(text,text) FROM PUBLIC;` then `GRANT` it to specific roles to
-restrict who can run remote commands. Like the other synchronous tools it runs
-through `run_tool_call_as_role`, but its result comes from the
-`SECURITY DEFINER` function rather than RLS-bound data access; connection/auth
-failures surface as the tool result instead of aborting the turn.
+locked to its owner. `ssh.exec` is `SECURITY DEFINER`, owned by `postgres`,
+with `EXECUTE` granted to `PUBLIC` by default, so the acting role can call it
+without extra grants and never sees the keys; run `REVOKE EXECUTE ON FUNCTION
+ssh.exec(text,text) FROM PUBLIC;` then `GRANT` it to specific roles to restrict
+who can run remote commands. Like the other synchronous tools it runs through
+`run_tool_call_as_role`, but its result comes from the `SECURITY DEFINER`
+function rather than RLS-bound data access; connection/auth failures surface as
+the tool result instead of aborting the turn.
 
 ### Registering an SSH host
 
-`ssh.hosts` is seeded automatically on the harness's **first boot** by
-`docker-entrypoint-initdb.d/10-ssh-host.sh`. Set host/user (the rest optional) in
-the environment and `docker compose up`:
+`ssh.hosts` is registered by `harness/agents.sql`, which the `agent-init`
+service runs against the harness database (as the `postgres` superuser) on every
+`docker compose up`. Set host/user (the rest optional) in the environment:
 
 | Env var | Required | Default | Meaning |
 | --- | --- | --- | --- |
@@ -134,35 +135,29 @@ the environment and `docker compose up`:
 | `ATTOBOT_SSH_HOST_NAME` | no | `default` | logical name passed as the `BASH` tool's `host` arg |
 | `ATTOBOT_SSH_HOST_KEY_FINGERPRINT` | no | unset | lowercase hex SHA-256 of the server host key; omit to **skip** host-key verification (pin it later by updating the row) |
 
-On first boot the script generates an ed25519 keypair, inserts the private key
-into `ssh.hosts`, and prints the matching **public key** to the harness logs:
+On first registration `agents.sql` mints an ed25519 keypair **in-process** via
+pg_ssh's `ssh.keygen()` (pure Rust — no `ssh-keygen` binary, no temp files),
+inserts the private key straight into `ssh.hosts`, and `RETURNING`s the matching
+**public key** to the `agent-init` logs (it is only emitted on the first insert):
 
 ```
-ssh-host: registered 'default' -> deploy@10.0.0.5:22
-ssh-host: add this public key to the remote ~/.ssh/authorized_keys:
-ssh-ed25519 AAAAC3NzaC... attobot-default
+ host_name |                       public_key
+-----------+-----------------------------------------------------------
+ default   | ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... attobot-default
 ```
 
-Append that public key to the remote `~/.ssh/authorized_keys`. The key is also
-saved to `/var/lib/postgresql/ssh-<host_name>.pub` on the PGDATA volume so it
-survives log rotation:
+Append that public key to the remote `~/.ssh/authorized_keys`. The private key
+lives only in `ssh.hosts` (superuser-only): `ssh.keygen()` hands it straight to
+the catalog in memory and it is **never written to disk**. Registration is
+idempotent — `ON CONFLICT DO NOTHING` makes later runs no-ops and the key is
+never rotated. Recover the public key at any time as a superuser:
 
 ```sh
-docker compose exec harness cat /var/lib/postgresql/ssh-default.pub
+docker compose exec harness psql -tAc \
+  "SELECT public_key FROM ssh.hosts WHERE host_name='default';"
 ```
 
-The private key lives only in `ssh.hosts` (superuser-only): the temp key file is
-shredded after the insert, and the key is **not** regenerated on later boots —
-the row persists in the volume. If first-boot logs are gone, reconstruct the
-public key as a superuser:
-
-```sh
-psql -c "SELECT private_key FROM ssh.hosts WHERE host_name='default';" > /tmp/k
-chmod 600 /tmp/k && ssh-keygen -y -f /tmp/k && rm /tmp/k
-```
-
-Leave `ATTOBOT_SSH_HOST`/`ATTOBOT_SSH_USER` unset to skip registration entirely
-(this is what the pgtap test image does).
+Leave `ATTOBOT_SSH_HOST`/`ATTOBOT_SSH_USER` unset to skip registration entirely.
 
 ## Admin Dashboard
 
@@ -179,8 +174,8 @@ published SHA256 digest before installing the package.
 `pg_durable.worker_role`) is written into the base sample config so new clusters
 load the background worker before init SQL runs.
 
-The image also installs `pg-ssh-pg18_0.1.0-1_trixie_<arch>.deb` from the
-`sweatybridge/pg_ssh` `v0.1.0` GitHub release (SHA256-verified per arch).
+The image also installs `pg-ssh-pg18_0.3.0-1_trixie_<arch>.deb` from the
+`sweatybridge/pg_ssh` `v0.3.0` GitHub release (SHA256-verified per arch).
 `pg_ssh` needs no `shared_preload_libraries` — it is a function extension with no
 background worker — so it is enabled with `CREATE EXTENSION pg_ssh` in
 `docker-entrypoint-initdb.d/01-pg-ssh.sql`. (libssh2 is statically linked into
