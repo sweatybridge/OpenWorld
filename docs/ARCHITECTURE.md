@@ -1,0 +1,109 @@
+# Architecture
+
+attobot is a Postgres-resident agent harness. Agent state, turns, tool calls,
+memory, and outbound delivery all live in PostgreSQL tables under the
+`attobot` schema; tool-owned blob storage lives under `attotools`. Agents point
+at shared rows in `attobot.models`, so multiple agents can reuse the same model
+configuration. `pg_durable` owns the durable workflow execution, so a turn can
+survive database restarts and resume from its last checkpoint.
+
+There is no filesystem loop and no external agent process. Everything is
+PL/pgSQL functions, `pg_durable` workflows, and triggers running inside
+Postgres. The only other container is the one-shot `agent-init` seed job.
+
+## Design Philosophy
+
+- Any tools that affect external environments will be subjected to access control via role grants.
+- Accessing any internal state requires explicit evaluation of RLS policies.
+- Static route decorators don't work for dynamic tool invocations. Powerful APIs require require permissions to be pushed down to data level.
+- Files and large blobs are byte addressable and split into 4KB pages for efficient access on SSD.
+- ACID properties apply to entire agent state. Memory integrity is maintained via foreign keys to message history.
+- Backup and restore should work across windows, linux, and macOS.
+- Semantic indexes can be created to support multimodal search for pre-filling model context window with the right data.
+
+## Least-Privilege Access Matrix
+
+"own chat" for a telegram user =
+`agent_id = current_setting('attobot.current_agent_id')::bigint AND chat_id = current_setting('attobot.current_chat_id')`.
+"own agent" for an agent role =
+`agent_id = current_setting('attobot.current_agent_id')::bigint`.
+
+Each agent's **loop** (compose, model call, record, orchestrate) runs as that
+agent's own role - fixed, trusted code that needs the api_key, so the agent role
+reads its own config including secrets. **Tool calls** drop out of the loop role
+into a narrower scope: the requesting user's tier (`anonymous`/`authenticated`)
+for primary, and `attobot_service` for the subconscious. The intent is that no
+LLM-authored SQL runs with secret access - see the note on `config` below for a
+current gap. See `docs/abac-rls-security-design.md` for the full design and
+`tests/pgtap/` for the enforced matrix (the executable source of truth).
+
+Only the durable framework makes http calls. The primary agent polls telegram,
+appends new messages, and calls its own model. All assistant/system messages on
+`channel = 'telegram'` are forwarded to the chat; `tool` messages are not.
+
+The primary agent role runs the loop: it reads the shared `agents`/`models`
+rows, all `users` (and may create and edit users, but not delete them), its own
+`messages`, `memory`, `memory_sources` (full CRUD on its own agent), its own
+`attotools.blobs` (full CRUD, reached through its `anonymous`/`authenticated`
+membership), its own `config` (including secrets - needed to call the model),
+and appends + reads its own `lifecycle` events. It cannot delete `messages`,
+`config`, or `users`, and cannot modify `agents`/`models`. Its tool calls drop
+to the requesting user's tier, which cannot read secrets. A running loop may be
+interrupted or cancelled.
+
+The subconscious agent role runs its loop the same way (reading its own secrets
+to call its model). As its own role it sees its own `messages`, every agent's
+`memory` and `memory_sources` (full CRUD, to review and correct them), its own
+`config`, and all `users` (read-only); it can append its own `lifecycle`
+events but cannot read `lifecycle` or `attotools.blobs`. Its tool calls drop to
+`attobot_service`, a broad `BYPASSRLS` scope - see the note on `config` below.
+
+| Table | `anonymous` | `authenticated` | `agent_primary` | `agent_subconscious` | `service` |
+|---|---|---|---|---|---|
+| `agents` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
+| `models` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
+| `messages` | **SELECT own chat; no writes** | same | SELECT/INSERT/UPDATE own; no DELETE | SELECT/INSERT/UPDATE own; no DELETE | ALL |
+| `memory` | - | - | ALL own agent | ALL across agents | ALL |
+| `memory_sources` | - | - | ALL own agent | ALL across agents | ALL |
+| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | **ALL incl. secrets** |
+| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | INSERT own (no SELECT) | SELECT only |
+| `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
+| `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
+
+The `attobot_dashboard` role (the admin dashboard's DB principal) is `BYPASSRLS`
+with `SELECT`/`EXECUTE` only across these tables - it sees every row but can
+never write; secret values are redacted by the dashboard API, not by the
+database. The matrix above is enforced and exercised end-to-end by the pgTAP
+suite in `tests/pgtap/` (`docker compose run --rm pgtap`).
+
+Two least-privilege decisions (and one known gap):
+
+- **Secrets are meant to be kept out of every LLM-tool scope.** Agent roles read
+  their own `secret = true` config (`api_key`, `telegram_token`) - but only from
+  fixed loop code that needs the key to call the model. The user tier
+  (`anonymous`/`authenticated`, primary's tool scope) genuinely cannot read
+  secrets. **Known gap:** `attobot_service` - the subconscious's tool scope -
+  is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
+  secrets; the RBAC comment says "non-secret only" but the grant does not
+  enforce it. Today only the superuser, `attobot_service`, and
+  `attobot_dashboard` see secrets directly.
+- **`messages` SELECT is chat-wide for users; users never write.** The whole
+  conversation belongs to one configured chat = one agent, so a user sees all of
+  it (including other users' messages and the agent's replies). Anonymous and
+  authenticated hold `SELECT` only - they cannot `INSERT`, `UPDATE`, or
+  `DELETE`; the agent role appends messages on their behalf.
+
+## Docker Image
+
+The image uses `postgres:18-trixie` as its base and installs
+`pg-durable-postgresql-18_0.2.3-1_amd64.deb` from the
+`sweatybridge/pg_durable` `v0.2.3` GitHub release. The Dockerfile verifies the
+published SHA256 digest before installing the package.
+
+`shared_preload_libraries = 'pg_durable'` (plus `pg_durable.database` and
+`pg_durable.worker_role`) is written into the base sample config so new clusters
+load the background worker before init SQL runs.
+
+The `harness` service uses this image. The `agent-init` service uses the stock
+Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
+healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.

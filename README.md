@@ -1,348 +1,30 @@
 # attobot
 
-attobot is a Postgres-resident agent harness. Agent state, turns, tool calls,
-memory, and outbound delivery all live in PostgreSQL tables under the `attobot`
-schema; tool-owned blob storage lives under `attotools`. Agents point at shared
-rows in `attobot.models`, so multiple agents can reuse the same model
-configuration. `pg_durable` owns the durable workflow execution, so a turn can
-survive database restarts and resume from its last checkpoint.
+attobot is a Postgres-resident agent harness built for shared, stateful
+conversations. It is designed for multiplayer agents that join group chats and
+respond safely to unknown numbers by keeping the conversation stream, user
+identity ledger, and access boundaries inside PostgreSQL.
 
-There is no filesystem loop and no external agent process. Everything is
-PL/pgSQL functions, `pg_durable` workflows, and triggers running inside
-Postgres. The only other container is the one-shot `agent-init` seed job.
+All agent loops run as `pg_durable` workflows, so a turn can survive database
+restarts and resume from its last checkpoint. The full lifecycle is captured as
+events in the database, so every turn, tool call, inbox update, and operational
+change is available for auditing, replay, and debugging.
 
-## Architecture
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details on the design
+philosophy, execution model, and access permission matrix.
 
-The primary agent is driven by a trigger on the messages table.
+## Getting started
 
-```
--> trigger after insert on messages for each statement when role = 'user' and agent = 'primary'
-  -> attobot.start_agent_loop('primary', trigger_message_id, requesting_user_id)
-     (gate: one loop per agent at a time; a running loop absorbs mid-turn messages)
-    -> df.loop until (assistant messages since trigger >= agents.max_turn) as primary:
-      -> attobot.compose_llm_request() as request
-         (select soul + memory + last n messages in chat, plus attotools.tool_schemas())
-      -> df.http(POST /chat/completions, $request, 120) as response
-         -> on error attobot.append_message(role => 'system') + df.break
-      -> attobot.record_assistant($response) as assistant
-         (append assistant message; stamp payload.requesting_user_id for tool scoping)
-      -> df.if($assistant.tool_calls)
-         -> attotools.run_tool_calls(...) as primary
-            (start each call as its own df instance in parallel, await with timeout,
-             cancel on timeout, append each result as role => 'tool')
-         -> else df.break
-```
-
-Outbound delivery is a separate row-level trigger (this replaces a separate
-outbox table):
-
-```
--> trigger after insert on messages for each row
-   when role in ('assistant', 'system') and channel = 'telegram'
-  -> df.start(attobot.send_message_future(id))
-     -> text reply:      df.http(sendMessage)
-     -> attachment row:  attobot.send_message() — export blob to a temp file, curl sendDocument
-```
-
-Communication to the outside world is driven by long polling Telegram.
-
-```
--> df.loop (attobot.ensure_telegram_inbox_loop) as primary
-  -> df.http(getUpdates)
-    -> attobot.poll_messages() as primary
-       -> track each sender with attobot.upsert_user() (channel identity ledger)
-       -> batch-insert accepted messages as role => 'user', channel => 'telegram'
-          (one statement -> one user->loop trigger fire)
--> trigger after insert on messages for each row
-   when role in ('assistant', 'system') and channel = 'telegram'
-  -> telegram delivery (see above)
-```
-
-The subconscious agent shares the same loop design as primary but is driven by a
-cron schedule. Its tool calls run as the `attobot_agent_subconscious` role
-instead of a user tier.
-
-```
--> df.loop (attobot.ensure_agent_cron_loop) as subconscious
-  -> df.wait_for_schedule(cron)
-  -> attobot.append_message(role => 'system', '[schedule ...] review ...')
-  -> attobot.start_agent_loop('subconscious', trigger_message_id, NULL)
-```
-
-The durable turn workflow is SQL:
-
-- `compose_llm_request` builds an OpenAI-compatible `/chat/completions` body and
-  sends it through `df.http`.
-- Assistant messages are stored in `attobot.messages` via `record_assistant`,
-  with the parsed `tool_calls` on the payload.
-- Tool calls run as **per-call durable instances** (started in parallel, awaited
-  with a timeout, cancelled on timeout), not as child workflows that signal a
-  parent. The orchestrator appends each result as a `tool` message as
-  `attobot_service`.
-- Assistant turns are delivered by the outbound trigger when
-  `channel = 'telegram'`: final replies go out as their text, and tool-call
-  turns (usually empty text) are rendered to the tool name + params so the chat
-  sees what the agent is doing.
-- `SEND_ATTACHMENT` queues an attachment by inserting a `system` message
-  (channel `telegram`) whose payload references a stored blob; the outbound
-  trigger then delivers it.
-- The Telegram inbox loop uses `df.http` to poll `getUpdates` into
-  `attobot.messages` (which fires the user→loop trigger); outbound delivery uses
-  `df.http` `sendMessage` for text and `curl sendDocument` for attachments.
-
-
-## Least-privilege access matrix
-
-"own chat" for a telegram user =
-`agent_id = current_setting('attobot.current_agent_id')::bigint AND chat_id = current_setting('attobot.current_chat_id')`.
-"own agent" for an agent role =
-`agent_id = current_setting('attobot.current_agent_id')::bigint`.
-
-Each agent's **loop** (compose, model call, record, orchestrate) runs as that
-agent's own role — fixed, trusted code that needs the api_key, so the agent role
-reads its own config including secrets. **Tool calls** drop out of the loop role
-into a narrower scope: the requesting user's tier (`anonymous`/`authenticated`)
-for primary, and `attobot_service` for the subconscious. The intent is that no
-LLM-authored SQL runs with secret access — see the ⚠️ note on `config` below for
-a current gap. See `docs/abac-rls-security-design.md` for the full design and
-`tests/pgtap/` for the enforced matrix (the executable source of truth).
-
-Only the durable framework makes http calls. The primary agent polls telegram,
-appends new messages, and calls its own model. All assistant/system messages on
-`channel = 'telegram'` are forwarded to the chat; `tool` messages are not.
-
-The primary agent role runs the loop: it reads the shared `agents`/`models`
-rows, all `users` (and may create and edit users, but not delete them), its own
-`messages`, `memory`, `memory_sources` (full CRUD on its own agent), its own
-`attotools.blobs` (full CRUD, reached through its `anonymous`/`authenticated`
-membership), its own `config` (including secrets — needed to call the model),
-and appends + reads its own `lifecycle` events. It cannot delete `messages`,
-`config`, or `users`, and cannot modify `agents`/`models`. Its tool calls drop
-to the requesting user's tier, which cannot read secrets. A running loop may be
-interrupted or cancelled.
-
-The subconscious agent role runs its loop the same way (reading its own secrets
-to call its model). As its own role it sees its own `messages`, every agent's
-`memory` and `memory_sources` (full CRUD, to review and correct them), its own
-`config`, and all `users` (read-only); it can append its own `lifecycle` events
-but cannot read `lifecycle` or `attotools.blobs`. Its tool calls drop to
-`attobot_service`, a broad `BYPASSRLS` scope — see the ⚠️ note on `config` below.
-
-| Table | `anonymous` | `authenticated` | `agent_primary` | `agent_subconscious` | `service` |
-|---|---|---|---|---|---|
-| `agents` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
-| `models` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
-| `messages` | **SELECT own chat; no writes** | same | SELECT/INSERT/UPDATE own; no DELETE | SELECT/INSERT/UPDATE own; no DELETE | ALL |
-| `memory` | — | — | ALL own agent | ALL across agents | ALL |
-| `memory_sources` | — | — | ALL own agent | ALL across agents | ALL |
-| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | **ALL incl. secrets** ⚠️ |
-| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | INSERT own (no SELECT) | SELECT only |
-| `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
-| `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
-
-The `attobot_dashboard` role (the admin dashboard's DB principal) is `BYPASSRLS`
-with `SELECT`/`EXECUTE` only across these tables — it sees every row but can
-never write; secret values are redacted by the dashboard API, not by the
-database. The matrix above is enforced and exercised end-to-end by the pgTAP
-suite in `tests/pgtap/` (`docker compose run --rm pgtap`).
-
-Two least-privilege decisions (and one known gap):
-
-- **Secrets are meant to be kept out of every LLM-tool scope.** Agent roles read
-  their own `secret = true` config (`api_key`, `telegram_token`) — but only from
-  fixed loop code that needs the key to call the model. The user tier
-  (`anonymous`/`authenticated`, primary's tool scope) genuinely cannot read
-  secrets. ⚠️ **Known gap:** `attobot_service` — the subconscious's tool scope —
-  is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
-  secrets; the RBAC comment says "non-secret only" but the grant does not enforce
-  it. Today only the superuser, `attobot_service`, and `attobot_dashboard` see
-  secrets directly.
-- **`messages` SELECT is chat-wide for users; users never write.** The whole
-  conversation belongs to one configured chat = one agent, so a user sees all of
-  it (including other users' messages and the agent's replies). Anonymous and
-  authenticated hold `SELECT` only — they cannot `INSERT`, `UPDATE`, or `DELETE`;
-  the agent role appends messages on their behalf.
-
-
-## Run
-
-Build the Postgres 18 image with `pg_durable` installed from the
-`sweatybridge/pg_durable` GitHub release Debian package:
+Copy the example environment file, adjust any values you need, and start the
+stack:
 
 ```bash
-docker compose build
+cp .example.env .env
 docker compose up -d
 ```
 
-Fresh containers initialize the database schema in the Docker entrypoint. After
-Postgres passes its healthcheck, the one-shot `agent-init` service runs `psql`
-against the `harness` service and loads the mounted `agents.sql` seed file. That
-job creates the `primary` and `subconscious` agents. Set `ATTOBOT_API_KEY`
-before first boot, or rerun `agent-init` later, to seed both agents with an LLM
-key. Set `ATTOBOT_EXA_API_KEY` the same way to seed both agents with a key
-for the Exa-backed SEARCH tool. Secrets are stored in agent-scoped
-`attobot.config` rows:
-
-```bash
-ATTOBOT_API_KEY=sk-... ATTOBOT_EXA_API_KEY=... docker compose up -d
-```
-
-You can also override the shared model with `ATTOBOT_MODEL`,
-`ATTOBOT_API_BASE`, `ATTOBOT_TEMPERATURE`, `ATTOBOT_REASONING_EFFORT`,
-`ATTOBOT_CONTEXT_TOKENS`, and `ATTOBOT_MULTIMODAL_SUPPORT`. Compose passes
-these values to `psql` as variables for the seed SQL. The `agent-init` job
-configures the model before creating agents, then assigns both seeded agents to
-the configured model row.
-
-To create a new agent, configure a model first and pass its id:
-
-```bash
-docker compose exec harness psql -U postgres -d postgres
-```
-
-```sql
-WITH model AS (
-  SELECT attobot.upsert_model(
-    p_model => 'deepseek-v4-pro',
-    p_api_base => 'https://api.deepseek.com/v1',
-    p_temperature => 1.0,
-    p_reasoning_effort => 'medium',
-    p_context_tokens => 1000000,
-    p_multimodal_support => false
-  ) AS id
-)
-SELECT attobot.upsert_agent(
-  p_slug => 'primary',
-  p_soul => $$
-You are a persistent agent running inside PostgreSQL.
-Be direct. Use tools when you need to act on stored state.
-Reply directly when no tool action is needed.
-$$,
-  p_api_key => 'sk-...',
-  p_model_id => (SELECT id FROM model)
-);
-```
-
-To update only a secret:
-
-```sql
-SELECT attobot.set_config('primary', 'api_key', to_jsonb('sk-...'::text));
-```
-
-The `subconscious` agent is also seeded with a `primary-review` durable schedule
-that wakes it every 10 minutes.
-
-To run the agent seed job again after changing environment values:
-
-```bash
-docker compose run --rm agent-init
-```
-
-There is no client binary; interact with the agent by inserting a user message
-directly, which fires the user→loop trigger:
-
-```bash
-docker compose exec harness psql -U postgres -d postgres
-```
-
-```sql
-INSERT INTO attobot.messages(agent_id, role, content)
-VALUES (attobot.agent_id('primary'), 'user', 'Introduce yourself');
-```
-
-The assistant reply lands back in `attobot.messages`. (A message inserted
-without a telegram channel is not auto-delivered, so read it back directly.)
-
-```sql
-SELECT role, content, created_at
-FROM attobot.messages
-WHERE agent_id = attobot.agent_id('primary')
-ORDER BY id DESC LIMIT 10;
-```
-
-Turn progress is visible in `attobot.lifecycle` (operational events) and
-`df.instances` (durable instances).
-
-## Telegram
-
-For a clean database, configure and start the primary agent's durable Telegram
-inbox loop from the `agent-init` job:
-
-```bash
-ATTOBOT_TELEGRAM_TOKEN=123:abc \
-ATTOBOT_TELEGRAM_CHAT_ID=-1001234567 \
-docker compose up -d
-```
-
-For a forum topic, also set `ATTOBOT_TELEGRAM_THREAD_ID=42`. Override the
-poll timeout with `ATTOBOT_TELEGRAM_POLL_TIMEOUT`; the default is `60` seconds.
-If you add or change Telegram settings after the stack is already running,
-rerun `docker compose run --rm agent-init` so the seed SQL updates the stored
-configuration and ensures the inbox loop exists.
-
-To update stored Telegram settings later, call `attobot.configure_telegram`
-from `psql`. It stores the token and chat metadata as agent-scoped
-`attobot.config` rows:
-
-```sql
-SELECT attobot.configure_telegram(
-  p_agent_slug => 'primary',
-  p_token  => '123:abc',
-  p_chat_id => '-1001234567',
-  p_thread_id => NULL
-);
-```
-
-The inbox loop calls Telegram `getUpdates` through `pg_durable` and appends
-accepted messages as `[telegram <update_id>] ...` user messages. It accepts only
-the configured chat, and the configured topic when `telegram_thread_id` is set.
-
-Outbound delivery is trigger-driven: any `assistant` or `system` row inserted
-into `attobot.messages` with `channel = 'telegram'` (and with something to send
-— text, tool calls, or an attachment) fires a row-level trigger that starts a
-one-shot durable send workflow for that message. Text replies go out via
-`sendMessage`; a tool-call turn is rendered to `🔧 NAME(<params>)` (one line per
-call) and sent the same way; a row whose payload carries an `attachment` (e.g.
-queued by `SEND_ATTACHMENT`) goes out as a document.
-
-Attachment delivery exports the blob to a temporary file inside the Postgres
-container, then uploads it with Telegram `sendDocument` using `curl`.
-
-## Durable Loops
-
-Start a cron-driven schedule that appends a system message and starts the
-subconscious agent's loop:
-
-```sql
-SELECT attobot.ensure_agent_cron_loop(
-  p_agent_slug => 'subconscious',
-  p_name => 'heartbeat',
-  p_cron => '*/5 * * * *',
-  p_message => 'tick'
-);
-```
-
-## Dashboard
-
-A read-only admin dashboard for pg_durable workflows and the attobot domain ships as
-the `dashboard` compose service. It connects to Postgres as a dedicated
-`attobot_dashboard` role that is `BYPASSRLS` (so it can see every agent's workflows
-and data) but has **only `SELECT`/`EXECUTE`** privileges — writes fail at the
-database, so the console is view-only even if its API layer had a bug. The role is
-created by `agent-init` from `dashboard/dashboard-role.sql` on every seed run.
-
-```bash
-docker compose up -d
-```
-
-The console is then at <http://127.0.0.1:8088> (bound to host loopback only).
-`ATTOBOT_DASHBOARD_DB_PASSWORD` (default `dashboard`) sets the role password; set
-`ATTOBOT_DASHBOARD_TOKEN` to require `Authorization: Bearer <token>` on every API
-request. Tabs: Overview (`df.metrics`, worker heartbeat), Workflows (instances with
-labels parsed into loop/inbox/cron/send/tool/typing, plus a detail view with the
-node graph, execution history, and `df.explain`), Agents, Messages, Memory, Users,
-Lifecycle, Config, and Blobs. Secrets in `attobot.config` are redacted server-side
-— use `psql` to read real values.
+Detailed configuration, seeding, Telegram, and dashboard setup lives in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Tables
 
@@ -364,9 +46,50 @@ Lifecycle, Config, and Blobs. Secrets in `attobot.config` are redacted server-si
   (`anonymous` / `authenticated`).
 - `attotools.blobs`: content-addressed large content storage as external `bytea`.
 
+## Roles
+
+The permission model is split into a few small roles rather than one broad
+application role:
+
+- `attobot_agent_primary` runs the primary loop and handles user-facing turns.
+- `attobot_agent_subconscious` runs review and background loops.
+- `attobot_anonymous` and `attobot_authenticated` are user-scoped SQL tiers for
+  the primary agent's tool calls.
+- `attobot_service` is the subconscious agent's broader tool-call scope.
+- `attobot_dashboard` is read-only for the admin dashboard.
+
+`pg_durable` executes the loop as the agent role, then drops into a narrower
+role when the SQL tool runs. The dashboard connects with a separate read-only
+principal. Full policy details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+```mermaid
+graph TD
+  db["attobot / attotools tables"]
+  orchestrator["postgres / pg_durable worker"]
+  primary["attobot_agent_primary"]
+  subconscious["attobot_agent_subconscious"]
+  anon["attobot_anonymous"]
+  auth["attobot_authenticated"]
+  service["attobot_service"]
+  dashboard["attobot_dashboard"]
+
+  orchestrator --> primary
+  orchestrator --> subconscious
+  primary --> db
+  subconscious --> db
+  anon --> db
+  auth --> db
+  service --> db
+  dashboard --> db
+  primary --> anon
+  primary --> auth
+  subconscious --> service
+  dashboard -. "SELECT / EXECUTE only" .-> db
+```
+
 ## Built-In Tools
 
-The LLM sees these database-native tools (schemas are introspected from the
+The LLM sees these database-native tools (schemas are introsducted from the
 `attotools._tool_*` functions):
 
 - `SEARCH`: search the public web and return result titles, URLs, and snippets.
@@ -375,33 +98,7 @@ The LLM sees these database-native tools (schemas are introspected from the
 - `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
 - `WRITE_BLOB`: write large or binary content into `attotools.blobs` using an explicit encoding.
 - `READ_BLOB`: read blob content by hash as `UTF8` text, `base64`, `hex`, `escape`, or another PostgreSQL text encoding.
-
-Tool calls are not queued in a separate request table. The parent turn stores
-tool calls on the assistant message, then `attotools.run_tool_calls` starts each
-call as its own durable instance (all started before awaiting, so they run in
-parallel) and polls `df.status` per call with a timeout. A call that does not
-finish in time is cancelled with `df.cancel` and its `tool` message records the
-timeout/error. `SEARCH` and `WEBFETCH` are themselves `df.http` graphs;
-`SEARCH` queries the [Exa](https://exa.ai) search API and returns up to 10 parsed
-results; it needs a per-agent `exa_api_key` secret (set `ATTOBOT_EXA_API_KEY`
-at boot — both agents share the key).
-`WEBFETCH` is limited to public `http` and `https` URLs and blocks obvious
-local/private hosts. Synchronous tools (`SQL`, the blob tools,
-`SEND_ATTACHMENT`) run under the acting role via `SET ROLE` + session GUCs, so
-row-level security binds for their data access; results are appended as
-`role = 'tool'` messages by `attobot_service`.
-
-`WRITE_BLOB` accepts `content` plus `encoding`. Use `base64`, `hex`, or `escape`
-for raw binary data; use PostgreSQL text encodings such as `UTF8`, `LATIN1`, or
-`WIN1252` when the content should be converted from text into bytes. It returns
-a JSON object with the blob hash, byte count, and marker.
-
-`SEND_ATTACHMENT` accepts a blob `hash`, plus optional `filename`, `caption`, and
-`mime_type`. It validates the blob, then queues an outbound `system` message
-(channel `telegram`) whose payload references the blob; the outbound trigger
-delivers it as a Telegram document.
-
-`SQL` intentionally accepts only one semicolon-free query and wraps it as a
+- `SQL` intentionally accepts only one semicolon-free query and wraps it as a
 subquery. For writes, use a data-modifying CTE with `RETURNING`, for example:
 
 ```sql
@@ -411,18 +108,3 @@ WITH ins AS (
 )
 SELECT * FROM ins
 ```
-
-## Docker Image
-
-The image uses `postgres:18-trixie` as its base and installs
-`pg-durable-postgresql-18_0.2.3-1_amd64.deb` from the
-`sweatybridge/pg_durable` `v0.2.3` GitHub release. The Dockerfile verifies the
-published SHA256 digest before installing the package.
-
-`shared_preload_libraries = 'pg_durable'` (plus `pg_durable.database` and
-`pg_durable.worker_role`) is written into the base sample config so new clusters
-load the background worker before init SQL runs.
-
-The `harness` service uses this image. The `agent-init` service uses the stock
-Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
-healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.
