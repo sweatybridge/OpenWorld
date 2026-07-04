@@ -94,12 +94,10 @@ The LLM sees these database-native tools (schemas are introsducted from the
 
 - `SEARCH`: search the public web and return result titles, URLs, and snippets.
 - `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, effective URL, and a truncated text body.
-- `SQL`: run a single SQL query that returns rows.
 - `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
 - `WRITE_BLOB`: write large or binary content into `attotools.blobs` using an explicit encoding.
 - `READ_BLOB`: read blob content by hash as `UTF8` text, `base64`, `hex`, `escape`, or another PostgreSQL text encoding.
-- `SQL` intentionally accepts only one semicolon-free query and wraps it as a
-subquery. For writes, use a data-modifying CTE with `RETURNING`, for example:
+- `SQL`: run a single SQL query that returns rows; intentionally accepts only one semicolon-free query and wraps it as a subquery. For writes, use a data-modifying CTE with `RETURNING`, for example:
 
 ```sql
 WITH ins AS (
@@ -108,3 +106,7 @@ WITH ins AS (
 )
 SELECT * FROM ins
 ```
+
+## Admin Dashboard
+
+![Screenshot](https://github.com/user-attachments/assets/410f4f8d-d903-42dd-99d6-aaf170a90868)

@@ -416,6 +416,7 @@ BEGIN
   v_tools := attobot._render_tool_calls(v_msg.payload->'tool_calls');
   v_body := jsonb_build_object(
     'chat_id', v_chat_id,
+    'parse_mode', 'Markdown',
     'text', left(concat_ws(E'\n', nullif(v_msg.content, ''), nullif(v_tools, '')), 4096)
   );
   IF v_thread_id IS NOT NULL AND v_thread_id <> '' THEN
