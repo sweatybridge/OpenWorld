@@ -4,12 +4,15 @@
 enforcement of user-scoped tool execution.
 **Evolution since this doc was written:** each agent's loop now runs as that
 agent's own role (`attobot_agent_*`, `LOGIN`) rather than as `attobot_service`;
-`attobot_service` is repurposed as the subconscious's broad, **secret-free**
-tool-call scope; and agent roles read their own secrets from fixed loop code
-while every LLM-authored SQL scope (user tier / `attobot_service`) stays
-secret-free. The **README access matrix is the current source of truth**. Some
-mechanics described below (notably `start_turn`, the `outbox`, and
-`process_telegram_updates`) predate the trigger-driven loop and are stale.
+`attobot_service` is repurposed as the subconscious's broad tool-call scope; and
+agent roles read their own secrets from fixed loop code. The **README access
+matrix and the pgTAP suite in `tests/pgtap/` are the current source of truth** —
+the §7 matrix and §8 worked example below have been corrected to match. The
+narrative sections still predate the trigger-driven loop and are stale (notably
+`start_turn`, the `outbox`, and `process_telegram_updates`).
+⚠️ **The "secret-free tool scope" goal is not fully met today:** `attobot_service`
+is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
+secrets (see `config` in [§7](#7-least-privilege-access-matrix)).
 **Branch:** `docs/abac-rls-security` → `develop`.
 **Supersedes:** the stale `feature/abac-rls-security` attempt (see [§12](#12-prior-attempt--why-this-is-different)).
 
@@ -91,15 +94,18 @@ connections.
 attobot_agent_primary         # primary agent's turn execution
 attobot_agent_subconscious    # review/meta agent; never talks to operators
 
-attobot_service               # subconscious's broad tool scope; trusted compute
+attobot_service               # subconscious's broad tool scope; BYPASSRLS trusted compute
 
 attobot_authenticated         # a registered telegram operator (escalation tier)
 attobot_anonymous             # any telegram user in the configured group chat
 ```
 
-All `NOLOGIN` — they are *capabilities*. A `users.tier` value (`anonymous` |
-`authenticated`) selects which tier a tracked user maps to. Operators promote a
-user with `UPDATE attobot.users SET tier='authenticated' WHERE ...`.
+The two tiers and `attobot_service` are `NOLOGIN` *capabilities*; the two agent
+roles are `LOGIN` (the pg_durable worker connects as the submitted role, which
+must be a non-superuser `LOGIN` role). `attobot_service` is `BYPASSRLS`. A
+`users.tier` value (`anonymous` | `authenticated`) selects which tier a tracked
+user maps to. Operators promote a user with
+`UPDATE attobot.users SET tier='authenticated' WHERE ...`.
 
 ---
 
@@ -108,13 +114,12 @@ user with `UPDATE attobot.users SET tier='authenticated' WHERE ...`.
 Policies read session GUCs fail-closed (`current_setting(..., true)` returns
 NULL when unset → `NULL = x` → NULL → **deny**):
 
-| GUC | Set by | Used for |
+| GUC | Set by | Read by RLS policies for |
 |---|---|---|
-| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoped SELECT (whole chat), blobs, memory, outbox |
-| `attobot.current_telegram_user_id` | tool bootstrap | messages INSERT/UPDATE own-attribution |
+| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoping of `messages`, `memory`, `memory_sources`, `config`, `lifecycle`, `blobs` |
+| `attobot.current_chat_id` | tool bootstrap | `messages` chat-wide SELECT (the configured chat) |
 | `attobot.current_user_id` | tool bootstrap | `users` own-row SELECT |
-| `attobot.current_telegram_chat_id` | tool bootstrap | chat context |
-| `attobot.current_channel` | tool bootstrap | channel context |
+| `attobot.current_role`, `attobot.current_channel`, `attobot.current_telegram_user_id` | `set_context` | carried for the loop/tool; no RLS policy reads them today |
 
 `attobot.set_context(p_role, p_agent_id, p_telegram_user_id, p_telegram_chat_id,
 p_user_id, p_channel)` sets them all (3-arg `set_config`, transaction-local).
@@ -149,85 +154,92 @@ approximation; per-message turns are a later refinement.)
 
 ## 7. Least-privilege access matrix
 
-"own" for a telegram user =
-`payload #>> '{telegram_update,message,from,id}' = current_setting('attobot.current_telegram_user_id')`.
+"own chat" for a telegram user =
+`agent_id = current_setting('attobot.current_agent_id')::bigint AND chat_id = current_setting('attobot.current_chat_id')`.
 "own agent" for an agent role =
 `agent_id = current_setting('attobot.current_agent_id')::bigint`.
 
 | Table | `anonymous` | `authenticated` | `agent_primary` | `agent_subconscious` | `service` |
 |---|---|---|---|---|---|
-| `agents` | SELECT | SELECT | SELECT | SELECT | SELECT |
-| `models` | SELECT | SELECT | SELECT | SELECT | SELECT |
-| `messages` | **SELECT chat-wide**; INSERT/UPDATE own; **no DELETE** | same | SELECT/INSERT/UPDATE own agent; no DELETE | SELECT primary agent | ALL |
-| `memory` | — | — | ALL own agent | SELECT primary; INSERT primary; UPDATE own | ALL |
-| `config` | — | — | SELECT own (incl. secrets) | SELECT own (incl. secrets) | SELECT non-secret |
-| `outbox` | — | — | INSERT/UPDATE own agent | — | ALL |
-| `lifecycle` | — | — | SELECT; INSERT own | SELECT; INSERT own | SELECT/INSERT/UPDATE |
-| `attotools.blobs` | — | — | SELECT/INSERT/UPDATE own agent | SELECT own | ALL |
-| `users` | SELECT own row | SELECT own row | SELECT all | SELECT all | SELECT all; INSERT |
+| `agents` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
+| `models` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
+| `messages` | **SELECT own chat; no writes** | same | SELECT/INSERT/UPDATE own; no DELETE | SELECT/INSERT/UPDATE own; no DELETE | ALL |
+| `memory` | — | — | ALL own agent | ALL across agents | ALL |
+| `memory_sources` | — | — | ALL own agent | ALL across agents | ALL |
+| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | **ALL incl. secrets** ⚠️ |
+| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | INSERT own (no SELECT) | SELECT only |
+| `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
+| `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
-Two least-privilege decisions:
+The `attobot_dashboard` role is `BYPASSRLS` with `SELECT`/`EXECUTE` only across
+these tables (the admin dashboard's read-only DB principal; secrets are redacted
+by the dashboard API, not the database). The full matrix is enforced and
+exercised by `tests/pgtap/` — that suite is the authoritative reference; this
+table is kept in sync with it.
 
-- **Secrets are kept out of every LLM-tool scope.** Agent roles now read their
-  own `secret = true` config (`api_key`, `telegram_token`) from fixed loop code;
-  the LLM-authored SQL scopes (user tier, `attobot_service`) still cannot. Only
-  the superuser sees all secrets directly.
-- **`messages` SELECT is chat-wide for users.** The whole conversation belongs
-  to one configured chat = one agent, so a user sees all of it (including other
-  users' messages and the agent's replies). INSERT/UPDATE stay pinned to their
-  own `from.id`; DELETE remains impossible.
+Two least-privilege decisions (and one known gap):
+
+- **Secrets are meant to be kept out of every LLM-tool scope.** Agent roles read
+  their own `secret = true` config (`api_key`, `telegram_token`) from fixed loop
+  code, and the user tier (`anonymous`/`authenticated`) genuinely cannot read
+  secrets. ⚠️ **Known gap:** `attobot_service` — the subconscious's tool scope —
+  is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
+  secrets; the RBAC comment says "non-secret only" but the grant does not enforce
+  it. Today the superuser, `attobot_service`, and `attobot_dashboard` see secrets.
+- **`messages` SELECT is chat-wide for users; users never write.** The whole
+  conversation belongs to one configured chat = one agent, so a user sees all of
+  it (including other users' messages and the agent's replies). Anonymous and
+  authenticated hold `SELECT` only — they cannot `INSERT`/`UPDATE`/`DELETE`; the
+  agent role appends messages on their behalf.
 
 ---
 
 ## 8. The worked example: anonymous group-chat user on `messages`
 
-> "anonymous users in a group chat **insert** to `messages`, **update** their own
-> rows, and **no deletes**" — plus expanded **SELECT** to all messages in the
-> configured chat.
+Anonymous/authenticated users **read** the whole configured chat and **never
+write** — the agent role appends messages on their behalf. (An earlier design
+gave users their own INSERT/UPDATE scoped to `from.id`; that was dropped so the
+LLM can never author message rows directly.)
 
 ```sql
 -- SELECT: the whole configured chat (one agent = one chat)
 CREATE POLICY messages_user_select ON attobot.messages
   FOR SELECT TO attobot_anonymous, attobot_authenticated
-  USING (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
+  USING (
+    agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint
+    AND chat_id = NULLIF(current_setting('attobot.current_chat_id', true), '')::text
+  );
 
--- INSERT: only rows attributed to themselves (WITH CHECK pins from.id)
-CREATE POLICY messages_user_insert ON attobot.messages
-  FOR INSERT TO attobot_anonymous, attobot_authenticated
-  WITH CHECK (payload #>> '{telegram_update,message,from,id}'
-              = current_setting('attobot.current_telegram_user_id', true));
+-- The agent roles append and edit their own agent's rows (FOR ALL, no DELETE grant):
+CREATE POLICY messages_agent_all_own ON attobot.messages
+  FOR ALL TO attobot_agent_primary, attobot_agent_subconscious
+  USING (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint)
+  WITH CHECK (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
 
--- UPDATE: only their own rows, cannot re-attribute
-CREATE POLICY messages_user_update ON attobot.messages
-  FOR UPDATE TO attobot_anonymous, attobot_authenticated
-  USING (payload #>> '{telegram_update,message,from,id}'
-         = current_setting('attobot.current_telegram_user_id', true))
-  WITH CHECK (payload #>> '{telegram_update,message,from,id}'
-              = current_setting('attobot.current_telegram_user_id', true));
-
--- No DELETE policy, and GRANT omits DELETE -> deletion is impossible.
-GRANT INSERT, UPDATE, SELECT ON attobot.messages TO attobot_anonymous, attobot_authenticated;
+-- Users get SELECT only — no INSERT/UPDATE/DELETE grant, so they cannot write at all.
+GRANT SELECT ON attobot.messages TO attobot_anonymous, attobot_authenticated;
 ```
 
 > **Gotcha (validated).** A `bigserial` PK is backed by a `<table>_<col>_seq`
 > sequence; INSERT needs `USAGE` on it (nextval) **in addition to** INSERT on the
-> table, or the insert dies on the sequence before the RLS `WITH CHECK` runs.
-> The SQL grants `USAGE` per inserting role.
+> table. The SQL grants `USAGE` per inserting role (the agent roles, not the
+> tiers).
 
 ---
 
 ## 9. RLS policy catalog
 
-All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `service` gets a
-bypass policy (trusted compute); everything else scoped. Full set in
-`docker-entrypoint-initdb.d/40-attobot-rbac.sql`. Highlights:
+All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `attobot_service` is
+`BYPASSRLS` (trusted compute); everything else scoped. Full set in
+`docker-entrypoint-initdb.d/40-attobot-rbac.sql`, behaviour verified in
+`tests/pgtap/`. Highlights:
 
-- **messages** — as [§8](#8-the-worked-example-anonymous-group-chat-user-on-messages); agent roles `FOR ALL` on `agent_id = current_agent_id`.
-- **users** — own row by `id = current_user_id`; agent/service read all; service inserts; full access via service/superuser.
-- **config** — agent roles `SELECT` non-secret own rows only; writes via `set_config`.
-- **memory / outbox / blobs** — agent-scoped by `current_agent_id`; subconscious reads/writes any agent's memory.
+- **messages** — as [§8](#8-the-worked-example-anonymous-group-chat-user-on-messages); users SELECT the configured chat only; agent roles `FOR ALL` on `agent_id = current_agent_id`.
+- **users** — own row by `id = current_user_id` for tiers; agents read all; `agent_primary` inserts/updates (no delete); service full.
+- **config** — agent roles `SELECT`/`INSERT`/`UPDATE` their **own rows incl. secrets**; tiers `SELECT` non-secret own only; `attobot_service` is `BYPASSRLS` and reads **all** secrets (⚠️ gap).
+- **memory / memory_sources / blobs** — agent-scoped by `current_agent_id`; `agent_primary` full-CRUDs its own; `agent_subconscious` full-CRUDs every agent's memory/memory_sources; tiers full-CRUD their own blobs (subconscious gets none).
 - **agents / models** — PUBLIC read; service/superuser writes.
-- **lifecycle** — internal; agent+service read/insert; no user access.
+- **lifecycle** — tiers and `agent_primary` SELECT own; agents INSERT own (`agent_subconscious` cannot SELECT); service is SELECT-only.
 
 ---
 
