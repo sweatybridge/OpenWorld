@@ -13,20 +13,20 @@ Postgres. The only other container is the one-shot `agent-init` seed job.
 
 ## Design Philosophy
 
-- Any tools that affect external environments will be subjected to access control via role grants.
+- Any tools that affect external environments are subject to access control via role grants.
 - Accessing any internal state requires explicit evaluation of RLS policies.
-- Static route decorators don't work for dynamic tool invocations. Powerful APIs require require permissions to be pushed down to data level.
+- ACID properties apply to the entire agent state. Referential integrity is maintained via foreign keys from memory to message history.
+- Prefer general purpose tools that are open to extension by LLM and closed to modification.
 - Files and large blobs are byte addressable and split into 4KB pages for efficient access on SSD.
-- ACID properties apply to entire agent state. Memory integrity is maintained via foreign keys to message history.
 - Backup and restore should work across windows, linux, and macOS.
-- Semantic indexes can be created to support multimodal search for pre-filling model context window with the right data.
+- Semantic indexes can be created to support multimodal search, ie. pre-filling model context window with the right data.
 
 ## Least-Privilege Access Matrix
 
-"own chat" for a telegram user =
-`agent_id = current_setting('attobot.current_agent_id')::bigint AND chat_id = current_setting('attobot.current_chat_id')`.
 "own agent" for an agent role =
 `agent_id = current_setting('attobot.current_agent_id')::bigint`.
+"own chat" for a telegram user =
+`"own agent" AND chat_id = current_setting('attobot.current_chat_id')`.
 
 Each agent's **loop** (compose, model call, record, orchestrate) runs as that
 agent's own role - fixed, trusted code that needs the api_key, so the agent role
