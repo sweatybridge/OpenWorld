@@ -82,3 +82,5 @@ SELECT attobot.ensure_telegram_inbox_loop(
 )
 WHERE NULLIF(:'telegram_token', '') IS NOT NULL
   AND NULLIF(:'telegram_chat_id', '') IS NOT NULL;
+
+ALTER ROLE attobot_dashboard PASSWORD :'dashboard_db_password';

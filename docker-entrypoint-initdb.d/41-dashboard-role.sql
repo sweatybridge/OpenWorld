@@ -1,9 +1,5 @@
 -- ============================================================================
 -- Read-only dashboard role for the attobot admin dashboard.
--- Run by the `agent-init` one-shot job (as the `postgres` superuser) on every
--- seed run, exactly like the api-key / telegram seeding in agents.sql.
---   --set=dashboard_db_password=...
---   --file=/attobot/dashboard-role.sql
 --
 -- pg_durable hides other users' instances behind RLS (a normal role only sees
 -- instances it submitted). The dashboard needs to see *all* workflows and *all*
@@ -11,6 +7,7 @@
 -- attobot_service in 40-attobot-rbac.sql. Crucially it gets ONLY SELECT/EXECUTE:
 -- no INSERT/UPDATE/DELETE/USAGE-on-sequences, so it is read-only at the database
 -- even if the API layer had a bug.
+-- 
 -- Idempotent and safe to re-run.
 -- ============================================================================
 
@@ -21,9 +18,6 @@ BEGIN
     CREATE ROLE attobot_dashboard LOGIN BYPASSRLS;
   END IF;
 END $$;
-
--- (Re)set the password each run, like the agents seed re-applies config.
-ALTER ROLE attobot_dashboard PASSWORD :'dashboard_db_password';
 
 -- 2. df privileges: USAGE on the df schema, EXECUTE on the read/monitoring
 --    functions (list_instances, instance_info, instance_nodes, instance_executions,

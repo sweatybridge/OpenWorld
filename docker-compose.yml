@@ -2,6 +2,8 @@ services:
   harness:
     build:
       context: .
+      target: harness
+    restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
@@ -27,7 +29,6 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./agents.sql:/attobot/agents.sql:ro
-      - ./dashboard/dashboard-role.sql:/attobot/dashboard-role.sql:ro
     command:
       - psql
       - --no-psqlrc
@@ -48,7 +49,6 @@ services:
       - --set=telegram_poll_timeout=${ATTOBOT_TELEGRAM_POLL_TIMEOUT:-60}
       - --set=dashboard_db_password=${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
       - --file=/attobot/agents.sql
-      - --file=/attobot/dashboard-role.sql
 
   # Read-only admin dashboard for pg_durable workflows + attobot domain.
   # View-only: the attobot_dashboard DB role has only SELECT/EXECUTE grants, so
@@ -65,7 +65,7 @@ services:
     environment:
       PGHOST: harness
       PGPORT: 5432
-      PGDATABASE: ${PGDATABASE:-postgres}
+      PGDATABASE: postgres
       PGUSER: attobot_dashboard
       PGPASSWORD: ${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
       PORT: 8088
@@ -82,14 +82,16 @@ services:
       start_period: 10s
 
   # pgTAP permission-matrix suite. Two services mirror the harness + agent-init
-  # pattern: pgtap-db is a throwaway Postgres (schema auto-loaded on first boot),
+  # pattern: test-db is a throwaway Postgres (schema auto-loaded on first boot),
   # and pgtap is a one-shot runner that loads helpers/fixtures and runs pg_prove.
   # Neither touches the live harness. Exits non-zero on any failing assertion.
-  #   docker compose run --rm pgtap
-  pgtap-db:
+  #   docker compose -p test run --rm pgtap
+  test-db:
     build:
       context: .
-      dockerfile: tests/Dockerfile
+      target: pgtap
+    profiles:
+      - test
     environment:
       POSTGRES_PASSWORD: postgres
     healthcheck:
@@ -102,17 +104,21 @@ services:
   pgtap:
     build:
       context: .
-      dockerfile: tests/Dockerfile
+      target: pgtap
     depends_on:
-      pgtap-db:
+      test-db:
         condition: service_healthy
+    profiles:
+      - test
     environment:
-      PGHOST: pgtap-db
+      PGHOST: test-db
       PGUSER: postgres
       PGPASSWORD: postgres
-      DASHBOARD_DB_PASSWORD: dashboard
     restart: "no"
-    command: ["/tests/run.sh"]
+    volumes:
+      - ./tests:/tests:ro
+    command:
+      - /tests/run.sh
 
 volumes:
   attobot_pgdata:
