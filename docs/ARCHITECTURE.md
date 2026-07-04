@@ -104,6 +104,11 @@ published SHA256 digest before installing the package.
 `pg_durable.worker_role`) is written into the base sample config so new clusters
 load the background worker before init SQL runs.
 
+The image also installs `pg-ssh-pg18_0.3.0-1_trixie_<arch>.deb` from the
+`sweatybridge/pg_ssh` `v0.3.0` GitHub release. `pg_ssh` needs no
+`shared_preload_libraries`; it is enabled with `CREATE EXTENSION pg_ssh` in
+`docker-entrypoint-initdb.d/01-pg-ssh.sql`.
+
 The `harness` service uses this image. The `agent-init` service uses the stock
 Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
 healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.

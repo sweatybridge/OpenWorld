@@ -92,20 +92,22 @@ graph TD
 The LLM sees these database-native tools (schemas are introsducted from the
 `attotools._tool_*` functions):
 
-- `SEARCH`: search the public web and return result titles, URLs, and snippets.
-- `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, effective URL, and a truncated text body.
+- `SEARCH`: search the public web and return titles, URLs, and snippets.
+- `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, and a truncated text body.
+- `BASH`: run a shell command on a registered remote host over SSH.
 - `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
-- `WRITE_BLOB`: write large or binary content into `attotools.blobs` using an explicit encoding.
-- `READ_BLOB`: read blob content by hash as `UTF8` text, `base64`, `hex`, `escape`, or another PostgreSQL text encoding.
-- `SQL`: run a single SQL query that returns rows; intentionally accepts only one semicolon-free query and wraps it as a subquery. For writes, use a data-modifying CTE with `RETURNING`, for example:
+- `WRITE_BLOB`: store large or binary content in `attotools.blobs`.
+- `READ_BLOB`: read blob content by hash in a chosen text encoding.
+- `SQL`: run a single SQL query that returns rows.
 
-```sql
-WITH ins AS (
-  INSERT INTO some_table(value) VALUES ('x')
-  RETURNING *
-)
-SELECT * FROM ins
-```
+`BASH` uses the `pg_ssh` extension's `ssh.exec(host_name, command)` function.
+That function returns `stdout` and `stderr` as `bytea` and is defined as
+`SECURITY DEFINER`, owned by `postgres`. By default `EXECUTE` is granted to
+`PUBLIC`, so the acting role can call it without extra grants and never sees
+the SSH keys. To restrict remote command execution, revoke `EXECUTE` from
+`PUBLIC` and grant it only to the roles you want to allow.
+
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for SSH host registration.
 
 ## Admin Dashboard
 

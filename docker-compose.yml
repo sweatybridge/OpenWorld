@@ -48,6 +48,11 @@ services:
       - --set=telegram_api_base=${ATTOBOT_TELEGRAM_API_BASE:-https://api.telegram.org}
       - --set=telegram_poll_timeout=${ATTOBOT_TELEGRAM_POLL_TIMEOUT:-60}
       - --set=dashboard_db_password=${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
+      - --set=ssh_host=${ATTOBOT_SSH_HOST:-}
+      - --set=ssh_port=${ATTOBOT_SSH_PORT:-22}
+      - --set=ssh_user=${ATTOBOT_SSH_USER:-}
+      - --set=ssh_host_name=${ATTOBOT_SSH_HOST_NAME:-default}
+      - --set=ssh_fp=${ATTOBOT_SSH_HOST_KEY_FINGERPRINT:-}
       - --file=/attobot/agents.sql
 
   # Read-only admin dashboard for pg_durable workflows + attobot domain.
