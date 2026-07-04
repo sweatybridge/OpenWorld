@@ -12,7 +12,7 @@ ARG PG_SSH_SHA256=eea4865d29486eb0265015d189bcfe0f9691a8d5a3b7d93468329c8430d9a3
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl; \
+    apt-get install -y --no-install-recommends ca-certificates curl openssh-client; \
     # Download pg_durable package
     deb="pg-durable-postgresql-${PG_MAJOR}_${PG_DURABLE_VERSION}-1_${TARGETARCH}.deb"; \
     curl -fsSL \

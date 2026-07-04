@@ -120,6 +120,50 @@ through `run_tool_call_as_role`, but its result comes from the
 `SECURITY DEFINER` function rather than RLS-bound data access; connection/auth
 failures surface as the tool result instead of aborting the turn.
 
+### Registering an SSH host
+
+`ssh.hosts` is seeded automatically on the harness's **first boot** by
+`docker-entrypoint-initdb.d/10-ssh-host.sh`. Set host/user (the rest optional) in
+the environment and `docker compose up`:
+
+| Env var | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `ATTOBOT_SSH_HOST` | yes | — | remote host (IP or DNS name) |
+| `ATTOBOT_SSH_USER` | yes | — | remote SSH user |
+| `ATTOBOT_SSH_PORT` | no | `22` | remote port |
+| `ATTOBOT_SSH_HOST_NAME` | no | `default` | logical name passed as the `BASH` tool's `host` arg |
+| `ATTOBOT_SSH_HOST_KEY_FINGERPRINT` | no | unset | lowercase hex SHA-256 of the server host key; omit to **skip** host-key verification (pin it later by updating the row) |
+
+On first boot the script generates an ed25519 keypair, inserts the private key
+into `ssh.hosts`, and prints the matching **public key** to the harness logs:
+
+```
+ssh-host: registered 'default' -> deploy@10.0.0.5:22
+ssh-host: add this public key to the remote ~/.ssh/authorized_keys:
+ssh-ed25519 AAAAC3NzaC... attobot-default
+```
+
+Append that public key to the remote `~/.ssh/authorized_keys`. The key is also
+saved to `/var/lib/postgresql/ssh-<host_name>.pub` on the PGDATA volume so it
+survives log rotation:
+
+```sh
+docker compose exec harness cat /var/lib/postgresql/ssh-default.pub
+```
+
+The private key lives only in `ssh.hosts` (superuser-only): the temp key file is
+shredded after the insert, and the key is **not** regenerated on later boots —
+the row persists in the volume. If first-boot logs are gone, reconstruct the
+public key as a superuser:
+
+```sh
+psql -c "SELECT private_key FROM ssh.hosts WHERE host_name='default';" > /tmp/k
+chmod 600 /tmp/k && ssh-keygen -y -f /tmp/k && rm /tmp/k
+```
+
+Leave `ATTOBOT_SSH_HOST`/`ATTOBOT_SSH_USER` unset to skip registration entirely
+(this is what the pgtap test image does).
+
 ## Admin Dashboard
 
 ![Screenshot](https://github.com/user-attachments/assets/410f4f8d-d903-42dd-99d6-aaf170a90868)

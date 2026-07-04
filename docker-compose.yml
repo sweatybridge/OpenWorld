@@ -6,6 +6,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # SSH host registration runs once on first boot (see
+      # docker-entrypoint-initdb.d/10-ssh-host.sh): an ed25519 keypair is
+      # generated, the private key is seeded into ssh.hosts, and the public key
+      # is printed to the harness logs + saved to /var/lib/postgresql/ssh-*.pub
+      # for the remote host's authorized_keys. Leave HOST/USER unset to disable.
+      ATTOBOT_SSH_HOST: ${ATTOBOT_SSH_HOST:-}
+      ATTOBOT_SSH_PORT: ${ATTOBOT_SSH_PORT:-22}
+      ATTOBOT_SSH_USER: ${ATTOBOT_SSH_USER:-}
+      ATTOBOT_SSH_HOST_NAME: ${ATTOBOT_SSH_HOST_NAME:-default}
+      ATTOBOT_SSH_HOST_KEY_FINGERPRINT: ${ATTOBOT_SSH_HOST_KEY_FINGERPRINT:-}
     ports:
       - "5432:5432"
     volumes:
