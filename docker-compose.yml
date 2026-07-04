@@ -1,7 +1,7 @@
 services:
   harness:
     build:
-      context: .
+      context: ./harness
       target: harness
     restart: unless-stopped
     environment:
@@ -28,7 +28,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - ./agents.sql:/attobot/agents.sql:ro
+      - ./harness/agents.sql:/attobot/agents.sql:ro
     command:
       - psql
       - --no-psqlrc
