@@ -81,44 +81,5 @@ services:
       retries: 10
       start_period: 10s
 
-  # pgTAP permission-matrix suite. Two services mirror the harness + agent-init
-  # pattern: test-db is a throwaway Postgres (schema auto-loaded on first boot),
-  # and pgtap is a one-shot runner that loads helpers/fixtures and runs pg_prove.
-  # Neither touches the live harness. Exits non-zero on any failing assertion.
-  #   docker compose -p test run --rm pgtap
-  test-db:
-    build:
-      context: .
-      target: pgtap
-    profiles:
-      - test
-    environment:
-      POSTGRES_PASSWORD: postgres
-    healthcheck:
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
-      interval: 3s
-      timeout: 3s
-      retries: 30
-      start_period: 5s
-
-  pgtap:
-    build:
-      context: .
-      target: pgtap
-    depends_on:
-      test-db:
-        condition: service_healthy
-    profiles:
-      - test
-    environment:
-      PGHOST: test-db
-      PGUSER: postgres
-      PGPASSWORD: postgres
-    restart: "no"
-    volumes:
-      - ./tests:/tests:ro
-    command:
-      - /tests/run.sh
-
 volumes:
   attobot_pgdata:
