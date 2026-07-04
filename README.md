@@ -92,95 +92,23 @@ graph TD
 The LLM sees these database-native tools (schemas are introsducted from the
 `attotools._tool_*` functions):
 
-- `SEARCH`: search the public web and return result titles, URLs, and snippets.
-- `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, effective URL, and a truncated text body.
-- `BASH`: run a shell command on a remote host over SSH and return `stdout`, `stderr`, and `exit_code` (host must be registered in `ssh.hosts`).
+- `SEARCH`: search the public web and return titles, URLs, and snippets.
+- `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, and a truncated text body.
+- `BASH`: run a shell command on a registered remote host over SSH.
 - `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
-- `WRITE_BLOB`: write large or binary content into `attotools.blobs` using an explicit encoding.
-- `READ_BLOB`: read blob content by hash as `UTF8` text, `base64`, `hex`, `escape`, or another PostgreSQL text encoding.
-- `SQL`: run a single SQL query that returns rows; intentionally accepts only one semicolon-free query and wraps it as a subquery. For writes, use a data-modifying CTE with `RETURNING`, for example:
+- `WRITE_BLOB`: store large or binary content in `attotools.blobs`.
+- `READ_BLOB`: read blob content by hash in a chosen text encoding.
+- `SQL`: run a single SQL query that returns rows.
 
-```sql
-WITH ins AS (
-  INSERT INTO some_table(value) VALUES ('x')
-  RETURNING *
-)
-SELECT * FROM ins
-```
+`BASH` uses the `pg_ssh` extension's `ssh.exec(host_name, command)` function.
+That function returns `stdout` and `stderr` as `bytea` and is defined as
+`SECURITY DEFINER`, owned by `postgres`. By default `EXECUTE` is granted to
+`PUBLIC`, so the acting role can call it without extra grants and never sees
+the SSH keys. To restrict remote command execution, revoke `EXECUTE` from
+`PUBLIC` and grant it only to the roles you want to allow.
 
-`BASH` runs a shell command on a remote host over SSH via the `pg_ssh`
-extension's `ssh.exec(host_name, command)`, which returns `stdout`/`stderr` as
-`bytea` (decoded as UTF-8 for the tool result). Hosts are pre-registered by a
-superuser in `ssh.hosts`, which keeps PEM private keys in memory only and is
-locked to its owner. `ssh.exec` is `SECURITY DEFINER`, owned by `postgres`,
-with `EXECUTE` granted to `PUBLIC` by default, so the acting role can call it
-without extra grants and never sees the keys; run `REVOKE EXECUTE ON FUNCTION
-ssh.exec(text,text) FROM PUBLIC;` then `GRANT` it to specific roles to restrict
-who can run remote commands. Like the other synchronous tools it runs through
-`run_tool_call_as_role`, but its result comes from the `SECURITY DEFINER`
-function rather than RLS-bound data access; connection/auth failures surface as
-the tool result instead of aborting the turn.
-
-### Registering an SSH host
-
-`ssh.hosts` is registered by `harness/agents.sql`, which the `agent-init`
-service runs against the harness database (as the `postgres` superuser) on every
-`docker compose up`. Set host/user (the rest optional) in the environment:
-
-| Env var | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `ATTOBOT_SSH_HOST` | yes | — | remote host (IP or DNS name) |
-| `ATTOBOT_SSH_USER` | yes | — | remote SSH user |
-| `ATTOBOT_SSH_PORT` | no | `22` | remote port |
-| `ATTOBOT_SSH_HOST_NAME` | no | `default` | logical name passed as the `BASH` tool's `host` arg |
-| `ATTOBOT_SSH_HOST_KEY_FINGERPRINT` | no | unset | lowercase hex SHA-256 of the server host key; omit to **skip** host-key verification (pin it later by updating the row) |
-
-On first registration `agents.sql` mints an ed25519 keypair **in-process** via
-pg_ssh's `ssh.keygen()` (pure Rust — no `ssh-keygen` binary, no temp files),
-inserts the private key straight into `ssh.hosts`, and `RETURNING`s the matching
-**public key** to the `agent-init` logs (it is only emitted on the first insert):
-
-```
- host_name |                       public_key
------------+-----------------------------------------------------------
- default   | ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... attobot-default
-```
-
-Append that public key to the remote `~/.ssh/authorized_keys`. The private key
-lives only in `ssh.hosts` (superuser-only): `ssh.keygen()` hands it straight to
-the catalog in memory and it is **never written to disk**. Registration is
-idempotent — `ON CONFLICT DO NOTHING` makes later runs no-ops and the key is
-never rotated. Recover the public key at any time as a superuser:
-
-```sh
-docker compose exec harness psql -tAc \
-  "SELECT public_key FROM ssh.hosts WHERE host_name='default';"
-```
-
-Leave `ATTOBOT_SSH_HOST`/`ATTOBOT_SSH_USER` unset to skip registration entirely.
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for SSH host registration.
 
 ## Admin Dashboard
 
 ![Screenshot](https://github.com/user-attachments/assets/410f4f8d-d903-42dd-99d6-aaf170a90868)
-
-## Docker Image
-
-The image uses `postgres:18-trixie` as its base and installs
-`pg-durable-postgresql-18_0.2.3-1_amd64.deb` from the
-`sweatybridge/pg_durable` `v0.2.3` GitHub release. The Dockerfile verifies the
-published SHA256 digest before installing the package.
-
-`shared_preload_libraries = 'pg_durable'` (plus `pg_durable.database` and
-`pg_durable.worker_role`) is written into the base sample config so new clusters
-load the background worker before init SQL runs.
-
-The image also installs `pg-ssh-pg18_0.3.0-1_trixie_<arch>.deb` from the
-`sweatybridge/pg_ssh` `v0.3.0` GitHub release (SHA256-verified per arch).
-`pg_ssh` needs no `shared_preload_libraries` — it is a function extension with no
-background worker — so it is enabled with `CREATE EXTENSION pg_ssh` in
-`docker-entrypoint-initdb.d/01-pg-ssh.sql`. (libssh2 is statically linked into
-`pg_ssh.so`, so the base image's libssl/libcrypto are the only runtime deps.)
-
-The `harness` service uses this image. The `agent-init` service uses the stock
-Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
-healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.

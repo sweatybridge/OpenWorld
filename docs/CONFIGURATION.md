@@ -119,6 +119,45 @@ The dashboard uses the `attobot_dashboard` DB role. Set
 `ATTOBOT_DASHBOARD_TOKEN` to require `Authorization: Bearer <token>` on API
 requests.
 
+## SSH Host Registration
+
+`ssh.hosts` is registered by `harness/agents.sql`, which the `agent-init`
+service runs against the harness database as the `postgres` superuser on every
+`docker compose up`. Set the host and user in the environment; the rest are
+optional:
+
+| Env var | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `ATTOBOT_SSH_HOST` | yes | — | remote host (IP or DNS name) |
+| `ATTOBOT_SSH_USER` | yes | — | remote SSH user |
+| `ATTOBOT_SSH_PORT` | no | `22` | remote port |
+| `ATTOBOT_SSH_HOST_NAME` | no | `default` | logical name passed as the `BASH` tool's `host` arg |
+| `ATTOBOT_SSH_HOST_KEY_FINGERPRINT` | no | unset | lowercase hex SHA-256 of the server host key; omit to skip host-key verification and pin it later by updating the row |
+
+On first registration `agents.sql` mints an ed25519 keypair in-process via
+pg_ssh's `ssh.keygen()`, inserts the private key straight into `ssh.hosts`, and
+returns the matching public key to the `agent-init` logs:
+
+```text
+ host_name |                       public_key
+-----------+-----------------------------------------------------------
+ default   | ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... attobot-default
+```
+
+Append that public key to the remote `~/.ssh/authorized_keys`. The private key
+lives only in `ssh.hosts` and is never written to disk. Registration is
+idempotent, so later runs are no-ops and the key is not rotated.
+
+Recover the public key at any time as a superuser:
+
+```sh
+docker compose exec harness psql -tAc \
+  "SELECT public_key FROM ssh.hosts WHERE host_name='default';"
+```
+
+Leave `ATTOBOT_SSH_HOST` and `ATTOBOT_SSH_USER` unset to skip registration
+entirely.
+
 ## Operational Notes
 
 To interact with the agent directly, open `psql` and insert a user message into
