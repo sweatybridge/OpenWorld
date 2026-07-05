@@ -244,9 +244,15 @@ GRANT SELECT, INSERT ON attobot.lifecycle
 
 ALTER TABLE attobot.lifecycle ENABLE ROW LEVEL SECURITY;
 
+-- attobot_agent_subconscious is NOT a member of anonymous/authenticated (it is
+-- a member of attobot_service), so lifecycle_agent_read_own does not apply to
+-- it. Without a SELECT policy, log_event's INSERT ... RETURNING id fails for the
+-- subconscious cron loop (RETURNING reads the row back under a SELECT policy).
+-- Grant service (and thus the subconscious member) SELECT on its own rows.
+-- attobot_service itself is BYPASSRLS, so this only binds the subconscious.
 DROP POLICY IF EXISTS lifecycle_agent_read_own ON attobot.lifecycle;
 CREATE POLICY lifecycle_agent_read_own ON attobot.lifecycle
-  FOR SELECT TO attobot_anonymous, attobot_authenticated
+  FOR SELECT TO attobot_anonymous, attobot_authenticated, attobot_service
   USING (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
 
 DROP POLICY IF EXISTS lifecycle_agent_insert_own ON attobot.lifecycle;
