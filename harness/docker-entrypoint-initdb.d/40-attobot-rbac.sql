@@ -198,20 +198,32 @@ CREATE POLICY memory_sources_subconscious_bypass ON attobot.memory_sources
 --   Agent roles SELECT their own config INCLUDING secrets: the loop body runs as
 --   the agent role and needs api_key / telegram_token to call the model and send.
 --   This is safe because the LLM never executes as an agent role — only fixed
---   loop code does. LLM-authored SQL runs as the user tier (primary) or
---   attobot_service (subconscious), neither of which can read secrets.
---   attobot_service is the subconscious's broad, secret-free tool scope, so it
---   gets non-secret SELECT only. Agent roles also write their own config rows
---   (INSERT/UPDATE, no DELETE, scoped to current_agent_id) — e.g. poll_messages
---   bumps telegram_update_offset as the agent role. Admin/superuser still owns
---   bootstrap writes (configure_telegram / set_config) at init.
+--   loop code does. LLM-authored SQL runs as the user tier (primary) or as
+--   attobot_service (subconscious). Neither can read secrets:
+--     * the user tiers are granted SELECT on non-secret own rows only (policy
+--       below); and
+--     * attobot_service — the subconscious's broad LLM-SQL tool scope — gets
+--       SELECT on the non-secret config_public view ONLY and NO grant on the
+--       base config table, so secret rows are unreachable even though service is
+--       BYPASSRLS (no grant -> no rows, bypass or not).
+--   Agent roles also write their own config rows (INSERT/UPDATE, no DELETE,
+--   scoped to current_agent_id) — e.g. poll_messages bumps telegram_update_offset
+--   as the agent role. Admin/superuser still owns bootstrap writes
+--   (configure_telegram / set_config) at init.
 -- ============================================================================
 
 GRANT SELECT ON attobot.config
   TO attobot_anonymous, attobot_authenticated;
 GRANT SELECT, INSERT, UPDATE ON attobot.config
   TO attobot_agent_primary, attobot_agent_subconscious;
-GRANT SELECT, INSERT, UPDATE, DELETE ON attobot.config TO attobot_service;
+-- attobot_service (the subconscious's LLM-SQL tool scope) must stay secret-free.
+-- It is BYPASSRLS, so a row-level policy cannot hide secret rows from it; instead
+-- it gets SELECT on the non-secret config_public view ONLY and no grant on the
+-- base table, so secrets are unreachable. No fixed loop code reads config as
+-- service (only the SQL tool does).
+CREATE OR REPLACE VIEW attobot.config_public AS
+  SELECT agent_id, key, value, updated_at FROM attobot.config WHERE NOT secret;
+GRANT SELECT ON attobot.config_public TO attobot_service;
 
 ALTER TABLE attobot.config ENABLE ROW LEVEL SECURITY;
 

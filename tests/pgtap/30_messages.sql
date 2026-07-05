@@ -10,7 +10,7 @@ SELECT no_plan();
 
 -- ----- GRANT shape -----------------------------------------------------------
 SELECT ok( has_table_privilege('attobot_anonymous','attobot.messages','SELECT'),             'anonymous can SELECT messages');
-SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.messages','INSERT'),         'anonymous CANNOT INSERT messages [DRIFT: README says INSERT/UPDATE own]');
+SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.messages','INSERT'),         'anonymous CANNOT INSERT messages (users are SELECT-only; the agent appends on their behalf)');
 SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.messages','UPDATE'),         'anonymous CANNOT UPDATE messages');
 SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.messages','DELETE'),         'anonymous CANNOT DELETE messages');
 SELECT ok( has_table_privilege('attobot_agent_primary','attobot.messages','SELECT,INSERT,UPDATE'), 'primary can SELECT/INSERT/UPDATE messages');

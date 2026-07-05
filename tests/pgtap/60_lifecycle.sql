@@ -1,6 +1,7 @@
 -- lifecycle: users SELECT own-agent; primary SELECT own (via anon membership) +
--- INSERT own; subconscious INSERT own but CANNOT SELECT [DRIFT]; service SELECT-
--- only despite BYPASSRLS [DRIFT]; dashboard read-all.
+-- INSERT own; subconscious SELECT own + INSERT own (SELECT via service membership
+-- -- log_event's INSERT ... RETURNING reads the row back under a SELECT policy);
+-- service SELECT-only despite BYPASSRLS; dashboard read-all.
 \set ON_ERROR_STOP on
 BEGIN;
 SELECT no_plan();
@@ -12,9 +13,10 @@ INSERT INTO attobot.lifecycle(agent_id, event) VALUES (1, 'lc.primary'), (2, 'lc
 SELECT ok( has_table_privilege('attobot_anonymous','attobot.lifecycle','SELECT'),             'anonymous can SELECT lifecycle');
 SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.lifecycle','INSERT'),         'anonymous CANNOT INSERT lifecycle');
 SELECT ok( has_table_privilege('attobot_agent_primary','attobot.lifecycle','SELECT,INSERT'),  'primary can SELECT/INSERT lifecycle');
+SELECT ok( has_table_privilege('attobot_agent_subconscious','attobot.lifecycle','SELECT,INSERT'), 'subconscious can SELECT/INSERT lifecycle (SELECT via service-granted policy)');
 SELECT ok( NOT has_table_privilege('attobot_agent_primary','attobot.lifecycle','DELETE'),     'primary CANNOT DELETE lifecycle');
 SELECT ok( has_table_privilege('attobot_service','attobot.lifecycle','SELECT'),               'service can SELECT lifecycle');
-SELECT ok( NOT has_table_privilege('attobot_service','attobot.lifecycle','INSERT'),           '[DRIFT] service CANNOT INSERT lifecycle (grant is SELECT-only; README says INSERT/UPDATE)');
+SELECT ok( NOT has_table_privilege('attobot_service','attobot.lifecycle','INSERT'),           'service CANNOT INSERT lifecycle (grant is SELECT-only)');
 SELECT ok( has_table_privilege('attobot_dashboard','attobot.lifecycle','SELECT'),             'dashboard can SELECT lifecycle');
 
 -- ===== READS (before any can() write) =======================================
@@ -28,7 +30,9 @@ SELECT is(pgtap_test.visible_count('attobot_agent_primary', $$SELECT 1 FROM atto
 
 SELECT set_config('attobot.current_agent_id', '2', true);
 SELECT is(pgtap_test.visible_count('attobot_agent_subconscious', $$SELECT 1 FROM attobot.lifecycle$$),
-          0::bigint, '[DRIFT] subconscious CANNOT SELECT lifecycle (not a member of anon/auth; README claims SELECT)');
+          1::bigint, 'subconscious sees its OWN lifecycle (SELECT via service membership; log_event RETURNING needs it)');
+SELECT is(pgtap_test.visible_count('attobot_agent_subconscious', $$SELECT 1 FROM attobot.lifecycle WHERE agent_id=1$$),
+          0::bigint, 'subconscious cannot see primary''s lifecycle');
 
 SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attobot.lifecycle$$),
           2::bigint, 'service sees all lifecycle');
@@ -54,7 +58,7 @@ SELECT ok(pgtap_test.can('attobot_agent_subconscious',
 
 SELECT ok(NOT pgtap_test.can('attobot_service',
   $$INSERT INTO attobot.lifecycle(agent_id, event) VALUES (1, 'lc.svc')$$),
-  '[DRIFT] service CANNOT INSERT lifecycle (SELECT-only grant)');
+  'service CANNOT INSERT lifecycle (SELECT-only grant)');
 SELECT ok(NOT pgtap_test.can('attobot_dashboard',
   $$INSERT INTO attobot.lifecycle(agent_id, event) VALUES (1, 'lc.d')$$),
   'dashboard CANNOT insert lifecycle');

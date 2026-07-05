@@ -4,9 +4,9 @@
 -- =============================================================================
 -- The matrix under test is the one ENFORCED by
 -- docker-entrypoint-initdb.d/40-attobot-rbac.sql (+ dashboard/dashboard-role.sql
--- for attobot_dashboard). Several cells differ from docs/abac-rls-security-design.md
--- and the README access matrix; those are exercised as the code actually behaves
--- and called out with [DRIFT] in the test description. See tests/README.md.
+-- for attobot_dashboard). It matches docs/abac-rls-security-design.md §7 and the
+-- docs/ARCHITECTURE.md access matrix; tests/README.md notes the few cells whose
+-- least-privilege shape is non-obvious.
 -- =============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgtap;

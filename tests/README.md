@@ -39,30 +39,25 @@ any assertion fails; add `--build` to rebuild after editing the SQL.
 | `20_agents_models.sql` | PUBLIC read; service-only writes |
 | `30_messages.sql` | users SELECT chat-wide (no writes); agents own-agent SELECT/INSERT/UPDATE; service ALL; dashboard read-all |
 | `40_memory.sql` | `memory` + `memory_sources`: primary own-agent; subconscious all agents; service ALL |
-| `50_config.sql` | users non-secret own; agents own incl. secrets; service reads **all** secrets; dashboard read-all |
+| `50_config.sql` | users non-secret own; agents own incl. secrets; service non-secret only via `config_public`; dashboard read-all |
 | `60_lifecycle.sql` | users own SELECT; primary own SELECT+INSERT; subconscious INSERT-only; service SELECT-only; dashboard read-all |
 | `70_blobs.sql` | users full CRUD own; primary same via membership; subconscious denied; service ALL; dashboard read-all |
 | `80_users.sql` | users own-row; primary SELECT all + INSERT/UPDATE; subconscious SELECT all; service ALL; dashboard read-all |
 
-## Documented drift between the code and the docs
+## Access-matrix notes (suite ↔ docs in sync)
 
-The suite asserts what the database **actually enforces**. Several cells differ
-from `docs/abac-rls-security-design.md` §7 and the README "Least-privilege
-access matrix"; those tests are tagged `[DRIFT]`. Summary:
+The suite asserts exactly what the database enforces, and that matches the
+access matrix in `docs/ARCHITECTURE.md` and `docs/abac-rls-security-design.md` §7.
+A few cells are non-obvious least-privilege decisions worth calling out:
 
-| # | Table | Cell | README/design says | Code enforces |
-|---|---|---|---|---|
-| 1 | `messages` | anonymous/authenticated | SELECT + INSERT/UPDATE own, no DELETE | **SELECT only** (no INSERT/UPDATE grant or policy) |
-| 2 | `attotools.blobs` | anonymous/authenticated | — (no access) | **full CRUD** on own agent (needed by WRITE_BLOB/READ_BLOB) |
-| 3 | `config` | service | non-secret only | **reads all secrets** (BYPASSRLS + full GRANT) |
-| 4 | `lifecycle` | service | SELECT/INSERT/UPDATE | **SELECT only** (GRANT is SELECT-only) |
-| 5 | `lifecycle` | agent_subconscious | SELECT; INSERT | **INSERT only** (not a member of anonymous/authenticated, so no SELECT policy applies) |
-| 6 | `attotools.blobs` | agent_subconscious | SELECT/INSERT/UPDATE own | **denied** (policy is `TO anonymous, authenticated`; subconscious is only a member of service) |
+| # | Table | Cell | Behaviour |
+|---|---|---|---|
+| 1 | `messages` | anonymous/authenticated | **SELECT only** — the configured chat is one agent = one chat, so a user reads all of it; the agent role appends/edits on their behalf. Users never write. |
+| 2 | `attotools.blobs` | anonymous/authenticated | **full CRUD** on own agent — needed by the `WRITE_BLOB`/`READ_BLOB` tools (the user tier is primary's tool scope). |
+| 3 | `config` | service | **non-secret only**, via the `attobot.config_public` view — `service` is the subconscious's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
+| 4 | `lifecycle` | service | **SELECT only** — `service` tracks lifecycle but never appends (the agent roles do). |
+| 5 | `lifecycle` | agent_subconscious | **SELECT own + INSERT own** — it is a member of `service` (not `anonymous`/`authenticated`), and `service` is on the `lifecycle_agent_read_own` SELECT policy so `log_event`'s `INSERT ... RETURNING` can read the row back. |
+| 6 | `attotools.blobs` | agent_subconscious | **denied** — the blobs policy is `TO anonymous, authenticated`, and the subconscious is only a member of `service`. |
 
-⚠️ **#3 is security-relevant.** The subconscious agent's tool scope is
-`attobot_service`, which is `BYPASSRLS` with full `SELECT` on `attobot.config`,
-so LLM-authored SQL running as `attobot_service` can read `api_key` /
-`telegram_token`. That contradicts the "secret-free tool scope" guarantee. If
-that is unintended, the fix is in `40-attobot-rbac.sql` (drop `service`'s config
-access or make it non-`BYPASSRLS` with a non-secret policy); the test in
-`50_config.sql` should then be flipped to assert the locked-down behaviour.
+`attobot_dashboard` is `BYPASSRLS` with `SELECT`/`EXECUTE` only; it reads secret
+`config` rows but the dashboard API redacts them server-side.

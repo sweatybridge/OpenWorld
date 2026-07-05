@@ -6,7 +6,7 @@ services:
   #   docker compose -f docker-compose.test.yml run --rm pgtap
   test-db:
     build:
-      context: .
+      context: ./harness
       target: pgtap
     environment:
       POSTGRES_PASSWORD: postgres
@@ -19,7 +19,7 @@ services:
 
   pgtap:
     build:
-      context: .
+      context: ./harness
       target: pgtap
     depends_on:
       test-db:

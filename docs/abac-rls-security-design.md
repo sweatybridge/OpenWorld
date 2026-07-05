@@ -10,9 +10,11 @@ matrix and the pgTAP suite in `tests/pgtap/` are the current source of truth** �
 the §7 matrix and §8 worked example below have been corrected to match. The
 narrative sections still predate the trigger-driven loop and are stale (notably
 `start_turn`, the `outbox`, and `process_telegram_updates`).
-⚠️ **The "secret-free tool scope" goal is not fully met today:** `attobot_service`
-is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
-secrets (see `config` in [§7](#7-least-privilege-access-matrix)).
+**Secret-free tool scope:** `attobot_service` (the subconscious's LLM-SQL tool
+scope) has no grant on the base `config` table — it reads non-secret rows only
+through the `config_public` view, so `api_key` / `telegram_token` are unreachable
+even though `service` is `BYPASSRLS` (no grant → no rows). See `config` in
+[§7](#7-least-privilege-access-matrix).
 **Branch:** `docs/abac-rls-security` → `develop`.
 **Supersedes:** the stale `feature/abac-rls-security` attempt (see [§12](#12-prior-attempt--why-this-is-different)).
 
@@ -166,8 +168,8 @@ approximation; per-message turns are a later refinement.)
 | `messages` | **SELECT own chat; no writes** | same | SELECT/INSERT/UPDATE own; no DELETE | SELECT/INSERT/UPDATE own; no DELETE | ALL |
 | `memory` | — | — | ALL own agent | ALL across agents | ALL |
 | `memory_sources` | — | — | ALL own agent | ALL across agents | ALL |
-| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | **ALL incl. secrets** ⚠️ |
-| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | INSERT own (no SELECT) | SELECT only |
+| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
+| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | SELECT own; INSERT own | SELECT only |
 | `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
@@ -177,15 +179,16 @@ by the dashboard API, not the database). The full matrix is enforced and
 exercised by `tests/pgtap/` — that suite is the authoritative reference; this
 table is kept in sync with it.
 
-Two least-privilege decisions (and one known gap):
+Two least-privilege decisions:
 
-- **Secrets are meant to be kept out of every LLM-tool scope.** Agent roles read
-  their own `secret = true` config (`api_key`, `telegram_token`) from fixed loop
-  code, and the user tier (`anonymous`/`authenticated`) genuinely cannot read
-  secrets. ⚠️ **Known gap:** `attobot_service` — the subconscious's tool scope —
-  is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
-  secrets; the RBAC comment says "non-secret only" but the grant does not enforce
-  it. Today the superuser, `attobot_service`, and `attobot_dashboard` see secrets.
+- **Secrets are kept out of every LLM-tool scope.** Agent roles read their own
+  `secret = true` config (`api_key`, `telegram_token`) from fixed loop code, and
+  neither LLM-SQL tool scope can read secrets: the user tier
+  (`anonymous`/`authenticated`) has SELECT on non-secret own rows only, and
+  `attobot_service` (the subconscious's tool scope) has no grant on the base
+  `config` table — it reads non-secret rows only through the `config_public` view,
+  so its `BYPASSRLS` flag cannot reach secrets (no grant → no rows). Today only the
+  superuser and `attobot_dashboard` see secrets (the dashboard API redacts them).
 - **`messages` SELECT is chat-wide for users; users never write.** The whole
   conversation belongs to one configured chat = one agent, so a user sees all of
   it (including other users' messages and the agent's replies). Anonymous and
@@ -236,10 +239,10 @@ All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `attobot_service` is
 
 - **messages** — as [§8](#8-the-worked-example-anonymous-group-chat-user-on-messages); users SELECT the configured chat only; agent roles `FOR ALL` on `agent_id = current_agent_id`.
 - **users** — own row by `id = current_user_id` for tiers; agents read all; `agent_primary` inserts/updates (no delete); service full.
-- **config** — agent roles `SELECT`/`INSERT`/`UPDATE` their **own rows incl. secrets**; tiers `SELECT` non-secret own only; `attobot_service` is `BYPASSRLS` and reads **all** secrets (⚠️ gap).
+- **config** — agent roles `SELECT`/`INSERT`/`UPDATE` their **own rows incl. secrets**; tiers `SELECT` non-secret own only; `attobot_service` has no grant on the base table and reads non-secret rows only via the `config_public` view (secret-free LLM-SQL scope).
 - **memory / memory_sources / blobs** — agent-scoped by `current_agent_id`; `agent_primary` full-CRUDs its own; `agent_subconscious` full-CRUDs every agent's memory/memory_sources; tiers full-CRUD their own blobs (subconscious gets none).
 - **agents / models** — PUBLIC read; service/superuser writes.
-- **lifecycle** — tiers and `agent_primary` SELECT own; agents INSERT own (`agent_subconscious` cannot SELECT); service is SELECT-only.
+- **lifecycle** — tiers and `agent_primary` SELECT own; agents INSERT own; `agent_subconscious` also SELECTs its own (via the `service`-granted policy, so `log_event`'s `INSERT ... RETURNING` can read the row back); service is SELECT-only.
 
 ---
 

@@ -1,12 +1,13 @@
--- attotools.blobs: anonymous/authenticated full CRUD on own agent [DRIFT: README
--- says none]; primary same via anonymous membership; subconscious DENIED despite
--- grant [DRIFT]; service ALL; dashboard read-all.
+-- attotools.blobs: anonymous/authenticated full CRUD on own agent (WRITE_BLOB /
+-- READ_BLOB need it); primary same via anonymous membership; subconscious DENIED
+-- despite the inherited grant (policy is TO anon/auth); service ALL; dashboard
+-- read-all.
 \set ON_ERROR_STOP on
 BEGIN;
 SELECT no_plan();
 
 -- ----- GRANT shape -----------------------------------------------------------
-SELECT ok( has_table_privilege('attobot_anonymous','attotools.blobs','SELECT,INSERT,UPDATE,DELETE'), '[DRIFT] anonymous has full CRUD on blobs (README says none)');
+SELECT ok( has_table_privilege('attobot_anonymous','attotools.blobs','SELECT,INSERT,UPDATE,DELETE'), 'anonymous has full CRUD on blobs (WRITE_BLOB/READ_BLOB need it)');
 SELECT ok( has_table_privilege('attobot_agent_primary','attotools.blobs','SELECT,INSERT,UPDATE,DELETE'), 'primary has full CRUD on blobs (via anonymous membership)');
 SELECT ok( has_table_privilege('attobot_service','attotools.blobs','SELECT,INSERT,UPDATE,DELETE'), 'service has full CRUD on blobs');
 SELECT ok( has_table_privilege('attobot_dashboard','attotools.blobs','SELECT'), 'dashboard can SELECT blobs');
@@ -23,7 +24,7 @@ SELECT is(pgtap_test.visible_count('attobot_agent_primary', $$SELECT 1 FROM atto
 
 SELECT set_config('attobot.current_agent_id', '2', true);
 SELECT is(pgtap_test.visible_count('attobot_agent_subconscious', $$SELECT 1 FROM attotools.blobs$$),
-          0::bigint, '[DRIFT] subconscious CANNOT see blobs (policy is TO anon/auth; README claims own-agent)');
+          0::bigint, 'subconscious CANNOT see blobs (policy is TO anon/auth; subconscious is only a member of service)');
 
 SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attotools.blobs$$),
           2::bigint, 'service sees all blobs');
@@ -49,7 +50,7 @@ SELECT ok(pgtap_test.can('attobot_agent_primary',
 SELECT set_config('attobot.current_agent_id', '2', true);
 SELECT ok(NOT pgtap_test.can('attobot_agent_subconscious',
   $$INSERT INTO attotools.blobs(agent_id, hash, content) VALUES (2, 'sub-ins', decode('00','hex'))$$),
-  '[DRIFT] subconscious CANNOT insert blobs (RLS denies despite inherited grant)');
+  'subconscious CANNOT insert blobs (RLS denies despite the inherited grant)');
 
 SELECT ok(pgtap_test.can('attobot_service',
   $$DELETE FROM attotools.blobs WHERE agent_id = 2 AND hash = 'probe-subconscious'$$),

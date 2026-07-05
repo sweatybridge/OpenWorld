@@ -33,8 +33,9 @@ agent's own role - fixed, trusted code that needs the api_key, so the agent role
 reads its own config including secrets. **Tool calls** drop out of the loop role
 into a narrower scope: the requesting user's tier (`anonymous`/`authenticated`)
 for primary, and `attobot_service` for the subconscious. The intent is that no
-LLM-authored SQL runs with secret access - see the note on `config` below for a
-current gap. See `docs/abac-rls-security-design.md` for the full design and
+LLM-authored SQL runs with secret access, and that is now enforced for both tool
+scopes (the user tiers and `attobot_service`, the latter via the non-secret
+`config_public` view). See `docs/abac-rls-security-design.md` for the full design and
 `tests/pgtap/` for the enforced matrix (the executable source of truth).
 
 Only the durable framework makes http calls. The primary agent polls telegram,
@@ -56,7 +57,8 @@ to call its model). As its own role it sees its own `messages`, every agent's
 `memory` and `memory_sources` (full CRUD, to review and correct them), its own
 `config`, and all `users` (read-only); it can append its own `lifecycle`
 events but cannot read `lifecycle` or `attotools.blobs`. Its tool calls drop to
-`attobot_service`, a broad `BYPASSRLS` scope - see the note on `config` below.
+`attobot_service`, a broad `BYPASSRLS` scope that reads non-secret `config` only
+(via the `config_public` view, so secrets stay out of the LLM SQL scope).
 
 | Table | `anonymous` | `authenticated` | `agent_primary` | `agent_subconscious` | `service` |
 |---|---|---|---|---|---|
@@ -65,8 +67,8 @@ events but cannot read `lifecycle` or `attotools.blobs`. Its tool calls drop to
 | `messages` | **SELECT own chat; no writes** | same | SELECT/INSERT/UPDATE own; no DELETE | SELECT/INSERT/UPDATE own; no DELETE | ALL |
 | `memory` | - | - | ALL own agent | ALL across agents | ALL |
 | `memory_sources` | - | - | ALL own agent | ALL across agents | ALL |
-| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | **ALL incl. secrets** |
-| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | INSERT own (no SELECT) | SELECT only |
+| `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
+| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | SELECT own; INSERT own | SELECT only |
 | `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
@@ -76,17 +78,17 @@ never write; secret values are redacted by the dashboard API, not by the
 database. The matrix above is enforced and exercised end-to-end by the pgTAP
 suite in `tests/pgtap/` (`docker compose run --rm pgtap`).
 
-Two least-privilege decisions (and one known gap):
+Two least-privilege decisions:
 
-- **Secrets are meant to be kept out of every LLM-tool scope.** Agent roles read
-  their own `secret = true` config (`api_key`, `telegram_token`) - but only from
-  fixed loop code that needs the key to call the model. The user tier
-  (`anonymous`/`authenticated`, primary's tool scope) genuinely cannot read
-  secrets. **Known gap:** `attobot_service` - the subconscious's tool scope -
-  is `BYPASSRLS` with full `SELECT` on `config`, so it can read every agent's
-  secrets; the RBAC comment says "non-secret only" but the grant does not
-  enforce it. Today only the superuser, `attobot_service`, and
-  `attobot_dashboard` see secrets directly.
+- **Secrets are kept out of every LLM-tool scope.** Agent roles read their own
+  `secret = true` config (`api_key`, `telegram_token`) - but only from fixed loop
+  code that needs the key to call the model. Neither LLM-SQL tool scope can read
+  secrets: the user tier (`anonymous`/`authenticated`, primary's tool scope) has
+  SELECT on non-secret own rows only, and `attobot_service` (the subconscious's
+  tool scope) has no grant on the base `config` table at all - it reads non-secret
+  rows only through the `config_public` view, so its `BYPASSRLS` flag is irrelevant
+  for secrets (no grant -> no rows). Today only the superuser and
+  `attobot_dashboard` see secrets directly (the dashboard API redacts them).
 - **`messages` SELECT is chat-wide for users; users never write.** The whole
   conversation belongs to one configured chat = one agent, so a user sees all of
   it (including other users' messages and the agent's replies). Anonymous and

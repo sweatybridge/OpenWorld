@@ -1,6 +1,7 @@
 -- config: users read non-secret own rows only; agent roles read own INCLUDING
--- secrets and write own (no DELETE); service is BYPASSRLS and reads ALL secrets
--- [DRIFT: RBAC comment + README claim non-secret only]; dashboard read-all.
+-- secrets and write own (no DELETE); service (the subconscious's LLM-SQL scope)
+-- has NO grant on the base table and reads non-secret rows only via the
+-- config_public view; dashboard read-all.
 \set ON_ERROR_STOP on
 BEGIN;
 SELECT no_plan();
@@ -11,7 +12,8 @@ SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.config','INSERT'
 SELECT ok( NOT has_table_privilege('attobot_anonymous','attobot.config','UPDATE'),         'anonymous CANNOT UPDATE config');
 SELECT ok( has_table_privilege('attobot_agent_primary','attobot.config','SELECT,INSERT,UPDATE'), 'primary can SELECT/INSERT/UPDATE config');
 SELECT ok( NOT has_table_privilege('attobot_agent_primary','attobot.config','DELETE'),     'primary CANNOT DELETE config');
-SELECT ok( has_table_privilege('attobot_service','attobot.config','SELECT,INSERT,UPDATE,DELETE'), 'service has ALL on config');
+SELECT ok( NOT has_table_privilege('attobot_service','attobot.config','SELECT'), 'service has NO SELECT on base config (secrets kept out of the tool scope)');
+SELECT ok( has_table_privilege('attobot_service','attobot.config_public','SELECT'), 'service can SELECT config_public (non-secret view)');
 SELECT ok( has_table_privilege('attobot_dashboard','attobot.config','SELECT'),             'dashboard can SELECT config');
 SELECT ok( NOT has_table_privilege('attobot_dashboard','attobot.config','UPDATE'),         'dashboard CANNOT UPDATE config');
 
@@ -50,12 +52,19 @@ SELECT set_config('attobot.current_agent_id', '2', true);
 SELECT is(pgtap_test.visible_count('attobot_agent_subconscious', $$SELECT 1 FROM attobot.config WHERE secret$$),
           1::bigint, 'subconscious reads only its OWN secret config (RLS-bound, not bypass)');
 
--- ===== service: BYPASSRLS reads ALL secrets [DRIFT] ==========================
-SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attobot.config WHERE secret AND key='probe_secret'$$),
-          2::bigint, '[DRIFT] service reads BOTH agents'' secret config (comment claims non-secret only)');
-SELECT ok(pgtap_test.can('attobot_service',
-  $$DELETE FROM attobot.config WHERE agent_id=1 AND key='live_key'$$),
-  'service can DELETE config (full grant)');
+-- ===== service: secret-free tool scope (non-secret via config_public) =========
+-- service has NO grant on the base config table, so it cannot reach secret rows
+-- at all — the LLM SQL tool (which runs as service) must never see api_key /
+-- telegram_token. It reads non-secret rows only through the config_public view.
+SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attobot.config$$),
+          -1::bigint, 'service has no SELECT on base config (permission denied; secrets unreachable)');
+SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attobot.config_public WHERE key='probe_public'$$),
+          2::bigint, 'service reads non-secret config via config_public (2 probe_public rows)');
+SELECT is(pgtap_test.visible_count('attobot_service', $$SELECT 1 FROM attobot.config_public WHERE key='probe_secret'$$),
+          0::bigint, 'config_public hides the secret probe_secret rows (view filters them out)');
+SELECT ok(NOT pgtap_test.can('attobot_service',
+  $$DELETE FROM attobot.config WHERE agent_id=1 AND key='probe_public'$$),
+  'service CANNOT delete config (no grant on the base table)');
 
 -- ===== dashboard: read-all incl. secrets (app-layer redacts, DB does not) ====
 SELECT is(pgtap_test.visible_count('attobot_dashboard', $$SELECT 1 FROM attobot.config WHERE secret AND key='probe_secret'$$),

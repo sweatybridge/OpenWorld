@@ -4,13 +4,23 @@
 -- Each per-domain test file executes inside its own BEGIN/ROLLBACK, so it reads
 -- this baseline but never mutates it.
 --
--- On a fresh test database the bigserial ids are deterministic:
+-- The bigserial ids are deterministic:
 --   attobot.models.id = 1
 --   attobot.agents.id = 1 (primary), 2 (subconscious)
 -- 10_roles_meta.sql asserts that mapping before anything depends on it.
 -- =============================================================================
 
 \set ON_ERROR_STOP on
+
+-- Reset the domain tables to a clean slate with sequences restarted, so the
+-- suite is re-runnable even when `docker compose run` reuses the (persistent)
+-- test-db container. RESTART IDENTITY resets the bigserial sequences so the
+-- agent/model ids stay 1/2. The message triggers are disabled in 00_setup.sql,
+-- so truncating messages fires no durable side effects. Runs as superuser.
+TRUNCATE attobot.memory_sources, attobot.memory, attobot.messages,
+         attobot.config, attobot.lifecycle, attobot.users,
+         attobot.agents, attobot.models, attotools.blobs
+RESTART IDENTITY CASCADE;
 
 -- one model row
 INSERT INTO attobot.models(name, api_base, temperature, reasoning_effort, context_tokens, multimodal_support)
