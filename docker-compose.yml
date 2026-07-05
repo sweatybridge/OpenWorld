@@ -29,6 +29,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./harness/agents.sql:/attobot/agents.sql:ro
+      - authorized_keys:/root/.ssh:rw
     command:
       - psql
       - --no-psqlrc
@@ -54,6 +55,7 @@ services:
       - --set=ssh_host_name=${ATTOBOT_SSH_HOST_NAME:-default}
       - --set=ssh_fp=${ATTOBOT_SSH_HOST_KEY_FINGERPRINT:-}
       - --file=/attobot/agents.sql
+      - --quiet
 
   # Read-only admin dashboard for pg_durable workflows + attobot domain.
   # View-only: the attobot_dashboard DB role has only SELECT/EXECUTE grants, so
@@ -86,5 +88,25 @@ services:
       retries: 10
       start_period: 10s
 
+  sshd:
+    image: lscr.io/linuxserver/openssh-server:latest
+    depends_on:
+      harness:
+        condition: service_healthy
+      agent-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - USER_NAME=attobot
+      - PUBLIC_KEY_DIR=/etc/authorized_keys
+    volumes:
+      - authorized_keys:/etc/authorized_keys:ro
+    ports:
+      - "2222:2222"
+
 volumes:
   attobot_pgdata:
+  authorized_keys:
