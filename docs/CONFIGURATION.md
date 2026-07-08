@@ -9,9 +9,9 @@ docker compose up -d
 ```
 
 The first `docker compose up` run starts the database and runs the one-shot
-`agent-init` seed job. That job loads the SQL files in `agents/` (plus
-`dashboard-role.sql`), creates the default `primary` and `subconscious` agents,
-and stores the chosen settings in `attobot.config`.
+`agent-init` seed job. That job loads `agents.sql` and `dashboard-role.sql`,
+creates the default `primary` and `subconscious` agents, and stores the chosen
+settings in `attobot.config`.
 
 If you change environment values later, rerun the seed job so the stored config
 matches the file:
@@ -121,7 +121,7 @@ requests.
 
 ## SSH Host Registration
 
-`ssh.hosts` is registered by `agents/90-ssh-host.sql`, which the `agent-init`
+`ssh.hosts` is registered by `harness/agents.sql`, which the `agent-init`
 service runs against the harness database as the `postgres` superuser on every
 `docker compose up`. Set the host and user in the environment; the rest are
 optional:
@@ -134,9 +134,9 @@ optional:
 | `ATTOBOT_SSH_HOST_NAME` | no | `default` | logical name passed as the `BASH` tool's `host` arg |
 | `ATTOBOT_SSH_HOST_KEY_FINGERPRINT` | no | unset | lowercase hex SHA-256 of the server host key; omit to skip host-key verification and pin it later by updating the row |
 
-On first registration `agents/90-ssh-host.sql` mints an ed25519 keypair
-in-process via pg_ssh's `ssh.keygen()`, inserts the private key straight into
-`ssh.hosts`, and returns the matching public key to the `agent-init` logs:
+On first registration `agents.sql` mints an ed25519 keypair in-process via
+pg_ssh's `ssh.keygen()`, inserts the private key straight into `ssh.hosts`, and
+returns the matching public key to the `agent-init` logs:
 
 ```text
  host_name |                       public_key
