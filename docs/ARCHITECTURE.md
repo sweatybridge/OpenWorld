@@ -112,5 +112,7 @@ The image also installs `pg-ssh-pg18_0.3.0-1_trixie_<arch>.deb` from the
 `docker-entrypoint-initdb.d/01-pg-ssh.sql`.
 
 The `harness` service uses this image. The `agent-init` service uses the stock
-Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
-healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.
+Postgres client image, mounts the `agents/` directory read-only, waits for
+`harness` to be healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=...` over the `agents/*.sql` files in load
+order (see `agents/README.md`). Everything runs in one `psql` session, so the
+`:model_id` `\gset` in `00-model.sql` carries into the agent files.
