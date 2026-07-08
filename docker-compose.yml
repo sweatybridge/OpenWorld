@@ -28,7 +28,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - ./agents:/attobot/agents:ro
+      - ./harness/agents.sql:/attobot/agents.sql:ro
       - authorized_keys:/root/.ssh:rw
     command:
       - psql
@@ -54,15 +54,7 @@ services:
       - --set=ssh_user=${ATTOBOT_SSH_USER:-}
       - --set=ssh_host_name=${ATTOBOT_SSH_HOST_NAME:-default}
       - --set=ssh_fp=${ATTOBOT_SSH_HOST_KEY_FINGERPRINT:-}
-      # Order matters: 00-model publishes :model_id (\gset) consumed by the
-      # agent files; 90-ssh-host must run last (its \o redirects later output).
-      # See agents/README.md. Each file is listed explicitly — no glob.
-      - --file=/attobot/agents/00-model.sql
-      - --file=/attobot/agents/10-primary.sql
-      - --file=/attobot/agents/20-subconscious.sql
-      - --file=/attobot/agents/30-search.sql
-      - --file=/attobot/agents/80-dashboard.sql
-      - --file=/attobot/agents/90-ssh-host.sql
+      - --file=/attobot/agents.sql
       - --quiet
 
   # Read-only admin dashboard for pg_durable workflows + attobot domain.
