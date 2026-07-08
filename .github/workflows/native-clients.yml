@@ -1,0 +1,90 @@
+name: native-clients
+
+# Builds the native iOS (dashboard/ios) and Android (dashboard/android) dashboard
+# clients. These apps can't be compiled on a dev box without their toolchains
+# (Xcode / Android SDK), so CI is the source of truth for "does it build".
+#
+# iOS   — XcodeGen generates the .xcodeproj from project.yml, then xcodebuild
+#         builds for the iOS Simulator without code signing.
+# Android — gradle is provisioned by setup-gradle (the wrapper jar is not
+#         committed, since it's a binary that can't be authored by hand), then
+#         the :app debug variant is assembled.
+
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - "dashboard/ios/**"
+      - "dashboard/android/**"
+      - ".github/workflows/native-clients.yml"
+  pull_request:
+    paths:
+      - "dashboard/ios/**"
+      - "dashboard/android/**"
+      - ".github/workflows/native-clients.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: native-clients-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS (SwiftUI)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: dashboard/ios
+        run: xcodegen generate
+
+      - name: xcodebuild (simulator, no signing)
+        working-directory: dashboard/ios
+        run: |
+          set -euo pipefail
+          xcrun xcodebuild -version
+          xcodebuild \
+            -project AttobotDashboard.xcodeproj \
+            -scheme AttobotDashboard \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+  android:
+    name: Android (Compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform 35 + build-tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      # Provision Gradle directly (the wrapper jar isn't committed — it's a binary
+      # that can't be hand-authored; locally you run `gradle wrapper` once, or open
+      # in Android Studio which generates it).
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Assemble debug
+        working-directory: dashboard/android
+        run: gradle :app:assembleDebug --no-daemon --stacktrace

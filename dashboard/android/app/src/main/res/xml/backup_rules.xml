@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude the encrypted secrets file and DataStore; credentials are
+         re-entered on a fresh install. -->
+    <exclude domain="sharedpref" path="secrets.xml" />
+    <exclude domain="data" path="datastore/settings.preferences_pb" />
+</full-backup-content>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0F1115</color>
+    <color name="panel">#171A21</color>
+    <color name="panel2">#1E222B</color>
+    <color name="border">#2A2F3A</color>
+    <color name="text">#E6E8EC</color>
+    <color name="muted">#9AA3B2</color>
+    <color name="accent">#4F9CF9</color>
+    <color name="ok">#3FB950</color>
+    <color name="warn">#D29922</color>
+    <color name="err">#F85149</color>
+    <color name="run">#4F9CF9</color>
+    <color name="pend">#8B949E</color>
+    <color name="cancel">#DB6D28</color>
+</resources>
