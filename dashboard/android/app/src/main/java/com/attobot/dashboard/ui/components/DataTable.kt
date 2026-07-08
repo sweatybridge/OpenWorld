@@ -89,6 +89,7 @@ fun <T> DataTable(
                         .fillMaxWidth()
                         .clickable(enabled = onRow != null) { onRow?.invoke(row) },
                 ) {
+                    val rowScope = this
                     columns.forEach { col ->
                         Box(
                             Modifier
@@ -96,7 +97,7 @@ fun <T> DataTable(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             contentAlignment = Alignment.CenterStart,
                         ) {
-                            col.cell(row)
+                            with(rowScope) { col.cell(row) }
                         }
                     }
                 }

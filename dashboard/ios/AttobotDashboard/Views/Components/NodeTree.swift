@@ -54,7 +54,7 @@ private struct NodeRow: View {
                     .foregroundStyle(markerColor)
                     .frame(width: 14, alignment: .leading)
                 Text(node.nodeType)
-                    .font(.system(size: 13, design: .monospaced, weight: .bold))
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.accent)
                 if let rn = node.resultName {
                     Text("|=> \(rn)")

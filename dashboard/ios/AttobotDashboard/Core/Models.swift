@@ -272,6 +272,6 @@ struct BlobRow: Codable, Hashable {
 
 // MARK: - Generic list wrapper
 
-struct RowList<T: Codable>: Codable {
+struct RowList<T: Decodable>: Decodable {
     var rows: [T]
 }

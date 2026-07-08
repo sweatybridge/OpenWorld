@@ -48,7 +48,7 @@ fun AgentPills(
     onSelect: (String) -> Unit,
 ) {
     val agents by produceState(initialValue = AgentsCache.snapshot()) {
-        value = AgentsCache.get()
+        this.value = AgentsCache.get()
     }
     val opts = listOf(PillOption("", "all agents")) +
         agents.map { PillOption(it.id.toString(), it.slug) }

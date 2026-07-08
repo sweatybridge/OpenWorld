@@ -39,7 +39,7 @@ struct WorkflowDetailScreen: View {
 
         VStack(alignment: .leading, spacing: 4) {
             Text(id)
-                .font(.system(size: 15, design: .monospaced, weight: .bold))
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.text)
                 .lineLimit(1)
             HStack(spacing: 10) {

@@ -257,21 +257,21 @@ object AgentsCache {
 
     suspend fun get(force: Boolean = false): List<AgentRow> {
         val now = System.currentTimeMillis()
+        // Fast path: serve a fresh cache without locking.
         if (!force && cache.isNotEmpty() && now - fetchedAt < 60_000L) return cache
-        return synchronized(lock) {
-            if (!force && cache.isNotEmpty() && System.currentTimeMillis() - fetchedAt < 60_000L) {
-                cache
-            } else {
-                val fresh = try {
-                    ApiProvider.agents()
-                } catch (e: Exception) {
-                    cache
-                }
-                cache = fresh
-                fetchedAt = System.currentTimeMillis()
-                fresh
-            }
+        // Fetch OUTSIDE the lock — a suspension point can't be inside a
+        // `synchronized` critical section. Two concurrent callers may both fetch
+        //; harmless (last write wins, cache is a List reference).
+        val fresh = try {
+            ApiProvider.agents()
+        } catch (e: Exception) {
+            cache
         }
+        synchronized(lock) {
+            cache = fresh
+            fetchedAt = System.currentTimeMillis()
+        }
+        return fresh
     }
 
     fun snapshot(): List<AgentRow> = cache

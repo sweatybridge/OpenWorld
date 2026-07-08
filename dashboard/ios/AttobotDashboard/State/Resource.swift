@@ -63,7 +63,7 @@ final class Resource<T> {
             }
         } catch {
             if !Task.isCancelled {
-                error = (error as? APIError)?.errorDescription ?? error.localizedDescription
+                self.error = (error as? APIError)?.errorDescription ?? error.localizedDescription
             }
         }
     }
