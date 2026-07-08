@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Response shapes for the read-only `/api/*` endpoints. A 1:1 port of
+ * Response shapes for the read-only `/api` endpoints. A 1:1 port of
  * dashboard/mobile/src/lib/api.ts (which itself mirrors dashboard/web/src/api.ts).
  *
  * Count fields arrive as strings (the server casts to `::text`) and bigint ids
