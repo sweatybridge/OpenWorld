@@ -19,7 +19,7 @@ struct SetupView: View {
     @State private var error: String?
     @State private var saving = false
 
-    init(reason: Reason, initialBase: String, initialToken: String, showCancel: Bool, onCancel: @escaping () -> Void, onSaved: @escaping () -> Void) {
+    init(reason: GateModel.Reason, initialBase: String, initialToken: String, showCancel: Bool, onCancel: @escaping () -> Void, onSaved: @escaping () -> Void) {
         self.reason = reason
         self.initialBase = initialBase
         self.initialToken = initialToken
