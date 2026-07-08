@@ -28,7 +28,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - ./harness/agents.sql:/attobot/agents.sql:ro
+      - ./agents.sql:/attobot/agents.sql:ro
       - authorized_keys:/root/.ssh:rw
     command:
       - psql
