@@ -85,10 +85,11 @@ services:
       PGPASSWORD: ${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
       PORT: 8088
       # Set ATTOBOT_DASHBOARD_TOKEN to require `Authorization: Bearer <token>`.
-      # Host exposure is always restricted to loopback by the port mapping below.
+      # The port is published on all interfaces (0.0.0.0) so mobile clients on the
+      # LAN — or over Tailscale — can reach it. Strongly set a token when exposing.
       DASHBOARD_TOKEN: ${ATTOBOT_DASHBOARD_TOKEN:-}
     ports:
-      - "127.0.0.1:8088:8088"
+      - "0.0.0.0:8088:8088"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8088/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

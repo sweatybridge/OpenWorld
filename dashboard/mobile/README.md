@@ -78,13 +78,14 @@ Change either later from the **Settings** screen (drawer → Settings, or
 
 ## Reaching the dashboard from a phone
 
-The compose service binds the dashboard to `127.0.0.1:8088`, which keeps it off
-the LAN. To connect a device, pick one:
+The compose service publishes the dashboard on **all interfaces** at port 8088
+(`0.0.0.0:8088:8088` in `docker-compose.yml`), so a device reaches it at
+`http://<host-lan-ip>:8088` over the LAN, or at the host's Tailscale address over
+Tailscale.
 
-1. **LAN** — republish the port to the host interface, e.g. in `docker-compose.yml`
-   change `127.0.0.1:8088:8088` → `8088:8088` (or bind to a specific LAN IP),
-   then point the app at `http://<host-lan-ip>:8088`.
-2. **Tailscale** — access the host over Tailscale and use its Tailscale IP/hostname.
+Because this exposes the dashboard beyond loopback, set `ATTOBOT_DASHBOARD_TOKEN`
+and enter it in the app's Setup screen so access is gated by the bearer token.
+(The dashboard stays read-only regardless — the DB role has only SELECT/EXECUTE.)
 
 The app allows cleartext HTTP to arbitrary hosts (`NSAppTransportSecurity` on iOS
 and `usesCleartextTraffic` on Android via the `expo-build-properties` plugin) so
