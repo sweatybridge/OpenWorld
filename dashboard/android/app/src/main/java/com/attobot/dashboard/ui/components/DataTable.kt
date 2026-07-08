@@ -6,7 +6,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -30,7 +29,7 @@ import com.attobot.dashboard.ui.theme.panel2
 data class TableColumn<T>(
     val header: String,
     val width: Dp,
-    val cell: @Composable RowScope.(T) -> Unit,
+    val cell: @Composable (T) -> Unit,
 )
 
 /**
@@ -89,7 +88,6 @@ fun <T> DataTable(
                         .fillMaxWidth()
                         .clickable(enabled = onRow != null) { onRow?.invoke(row) },
                 ) {
-                    val rowScope = this
                     columns.forEach { col ->
                         Box(
                             Modifier
@@ -97,7 +95,7 @@ fun <T> DataTable(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             contentAlignment = Alignment.CenterStart,
                         ) {
-                            with(rowScope) { col.cell(row) }
+                            col.cell(row)
                         }
                     }
                 }
