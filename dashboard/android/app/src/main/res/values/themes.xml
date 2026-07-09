@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework Material theme (no com.google.android.material dep needed).
+         Compose supplies the real Material3 dark theme at runtime. -->
+    <style name="Theme.Attobot" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorBackground">@color/bg</item>
+    </style>
+</resources>

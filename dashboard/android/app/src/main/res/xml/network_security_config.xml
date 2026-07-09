@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext HTTP is permitted to any host so LAN / Tailscale dashboards work.
+     (usesCleartextTraffic is also set on <application>.) For anything beyond a
+     trusted LAN, put the dashboard behind HTTPS instead. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

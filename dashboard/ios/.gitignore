@@ -1,0 +1,11 @@
+# XcodeGen generates the Xcode project from project.yml — don't commit it.
+# Run `xcodegen generate` to materialize AttobotDashboard.xcodeproj.
+*.xcodeproj
+*.xcworkspace
+build/
+DerivedData/
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+.DS_Store

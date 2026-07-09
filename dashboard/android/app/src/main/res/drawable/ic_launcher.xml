@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full-bleed launcher icon used as android:icon (valid on API 24+ as a vector
+     drawable; the adaptive icon in mipmap-anydpi-v26 is used for roundIcon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#0F1115"
+        android:pathData="M0,0 h48 v48 h-48 z" />
+    <path
+        android:fillColor="#4F9CF9"
+        android:pathData="M8,8 h32 a4,4 0 0 1 4,4 v24 a4,4 0 0 1 -4,4 h-32 a4,4 0 0 1 -4,-4 v-24 a4,4 0 0 1 4,-4 z" />
+    <path
+        android:fillColor="#0F1115"
+        android:pathData="M24,14 L30,34 L26,34 L24.6,27 L23.4,27 L22,34 L18,34 Z M24,20 L23.7,25 L24.3,25 Z" />
+</vector>

@@ -1,0 +1,19 @@
+# Gradle / build
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+
+# The Gradle wrapper jar is binary and intentionally NOT committed.
+# Run `gradle wrapper` once (or open in Android Studio) to generate it.
+gradle/wrapper/gradle-wrapper.jar
+
+# Keystore / signing
+*.jks
+*.keystore
+
+# Logs
+*.log
