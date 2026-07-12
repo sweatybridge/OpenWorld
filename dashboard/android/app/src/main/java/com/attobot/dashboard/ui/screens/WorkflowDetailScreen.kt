@@ -1,11 +1,15 @@
 package com.attobot.dashboard.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -64,6 +68,7 @@ private fun DetailBody(id: String, d: WorkflowDetail) {
     val label = info?.fieldOr("label", id) ?: id
     val statusStr = info?.fieldOr("status", "") ?: ""
     val currentNodes = d.nodes.filter { it.executionId == d.currentExecutionId }
+    var flipped by rememberSaveable { mutableStateOf(false) }
 
     Column {
         Text(
@@ -122,8 +127,18 @@ private fun DetailBody(id: String, d: WorkflowDetail) {
         } else {
             "Node graph"
         }
-        AttobotCard(title = graphTitle) {
-            NodeTree(currentNodes)
+        AttobotCard(
+            title = graphTitle,
+            right = {
+                Text(
+                    if (flipped) "⇅ execution" else "⇅ plan",
+                    color = accent,
+                    fontSize = 12.sp,
+                    modifier = Modifier.clickable { flipped = !flipped },
+                )
+            },
+        ) {
+            NodeTree(currentNodes, flipped = flipped)
         }
 
         AttobotCard(title = "Executions") {

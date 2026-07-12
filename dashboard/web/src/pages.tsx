@@ -215,6 +215,7 @@ export function WorkflowsPage() {
 
 export function WorkflowDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const [flipped, setFlipped] = useState(false);
   const detail = useQuery({
     queryKey: ["workflow", id],
     queryFn: () => apiGet<WorkflowDetail>(`/api/workflows/${id}`),
@@ -259,8 +260,19 @@ export function WorkflowDetailPage() {
         </Card>
       </div>
 
-      <Card title={`Node graph${currentNodes.length !== d.nodes.length ? ` · execution ${d.current_execution_id}` : ""}`}>
-        <NodeTree nodes={currentNodes} />
+      <Card
+        title={`Node graph${currentNodes.length !== d.nodes.length ? ` · execution ${d.current_execution_id}` : ""}`}
+        right={
+          <button
+            className="btn"
+            onClick={() => setFlipped((f) => !f)}
+            title={`Showing ${flipped ? "execution order (sources on top)" : "plan order (sink on top)"} — click for ${flipped ? "plan order (sink on top)" : "execution order (sources on top)"}`}
+          >
+            ⇅ {flipped ? "execution order" : "plan order"}
+          </button>
+        }
+      >
+        <NodeTree nodes={currentNodes} flipped={flipped} />
       </Card>
 
       <Card title="Executions">
