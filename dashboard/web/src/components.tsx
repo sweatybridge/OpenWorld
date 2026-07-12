@@ -129,7 +129,7 @@ export interface TreeNode {
   result: string | null;
 }
 
-export function NodeTree({ nodes }: { nodes: TreeNode[] }) {
+export function NodeTree({ nodes, flipped = false }: { nodes: TreeNode[]; flipped?: boolean }) {
   if (nodes.length === 0) return <EmptyState>No nodes recorded for this instance.</EmptyState>;
   const byId = new Map(nodes.map((n) => [n.node_id, n]));
   const childIds = new Set<string>();
@@ -138,6 +138,52 @@ export function NodeTree({ nodes }: { nodes: TreeNode[] }) {
     if (n.right_node != null) childIds.add(n.right_node);
   }
   const roots = nodes.filter((n) => !childIds.has(n.node_id));
+
+  if (flipped) {
+    // Execution/data-flow order: leaves (SQL sources) first, sink last.
+    // Flatten to a post-order list and indent each row by its distance from the
+    // farthest leaf beneath it, so sources sit at the left edge and the sink
+    // drops to the bottom — the inverse of the sink-rooted plan view.
+    const leafDepth = new Map<string, number>();
+    const depthOf = (id: string, stack: Set<string>): number => {
+      if (leafDepth.has(id)) return leafDepth.get(id)!;
+      const n = byId.get(id);
+      if (!n || stack.has(id)) return 0; // missing ref or cycle → treat as leaf
+      stack.add(id);
+      let d = 0;
+      if (n.left_node != null || n.right_node != null) {
+        const l = n.left_node != null ? depthOf(n.left_node, stack) : 0;
+        const r = n.right_node != null ? depthOf(n.right_node, stack) : 0;
+        d = 1 + Math.max(l, r);
+      }
+      stack.delete(id);
+      leafDepth.set(id, d);
+      return d;
+    };
+    const order: TreeNode[] = [];
+    const emit = (n: TreeNode, stack: Set<string>) => {
+      if (stack.has(n.node_id)) return; // cycle guard
+      stack.add(n.node_id);
+      const l = n.left_node != null ? byId.get(n.left_node) : null;
+      const r = n.right_node != null ? byId.get(n.right_node) : null;
+      if (l) emit(l, stack);
+      if (r) emit(r, stack);
+      stack.delete(n.node_id);
+      order.push(n);
+    };
+    for (const r of roots) depthOf(r.node_id, new Set());
+    for (const r of roots) emit(r, new Set());
+    return (
+      <div className="node-tree">
+        {order.map((n) => (
+          <div className="node" key={n.node_id} style={{ marginLeft: (leafDepth.get(n.node_id) ?? 0) * 18 }}>
+            <NodeLine node={n} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="node-tree">
       {roots.map((r) => <Node key={r.node_id} node={r} byId={byId} depth={0} />)}
@@ -145,30 +191,38 @@ export function NodeTree({ nodes }: { nodes: TreeNode[] }) {
   );
 }
 
-function Node({ node, byId, depth }: { node: TreeNode; byId: Map<string, TreeNode>; depth: number }) {
-  const left = node.left_node != null ? byId.get(node.left_node) : null;
-  const right = node.right_node != null ? byId.get(node.right_node) : null;
+function NodeLine({ node }: { node: TreeNode }) {
   const marker = NODE_MARKER[node.status ?? ""] ?? "•";
   const statusClass = STATUS_CLASS[node.status ?? ""] ?? "st-unknown";
   const queryOne = node.query ? node.query.replace(/\s+/g, " ").trim() : "";
   return (
+    <div className={`node-line ${statusClass}`}>
+      <span className="node-marker">{marker}</span>
+      <span className="node-type">{node.node_type}</span>
+      {node.result_name && <span className="node-name">|=&gt; {node.result_name}</span>}
+      {queryOne && (
+        <code className="node-query" title={node.query ?? ""}>
+          {queryOne.length > 90 ? queryOne.slice(0, 90) + "…" : queryOne}
+        </code>
+      )}
+      {node.result && (
+        <details className="node-result">
+          <summary>result</summary>
+          <JsonView value={node.result} defaultOpen={false} />
+        </details>
+      )}
+    </div>
+  );
+}
+
+// Plan order: sink-rooted, pre-order DFS, indent grows with depth so a consumer
+// always renders above the inputs feeding it (data flows up the page).
+function Node({ node, byId, depth }: { node: TreeNode; byId: Map<string, TreeNode>; depth: number }) {
+  const left = node.left_node != null ? byId.get(node.left_node) : null;
+  const right = node.right_node != null ? byId.get(node.right_node) : null;
+  return (
     <div className="node" style={{ marginLeft: depth * 18 }}>
-      <div className={`node-line ${statusClass}`}>
-        <span className="node-marker">{marker}</span>
-        <span className="node-type">{node.node_type}</span>
-        {node.result_name && <span className="node-name">|=&gt; {node.result_name}</span>}
-        {queryOne && (
-          <code className="node-query" title={node.query ?? ""}>
-            {queryOne.length > 90 ? queryOne.slice(0, 90) + "…" : queryOne}
-          </code>
-        )}
-        {node.result && (
-          <details className="node-result">
-            <summary>result</summary>
-            <JsonView value={node.result} defaultOpen={false} />
-          </details>
-        )}
-      </div>
+      <NodeLine node={node} />
       {left && <Node node={left} byId={byId} depth={depth + 1} />}
       {right && <Node node={right} byId={byId} depth={depth + 1} />}
     </div>

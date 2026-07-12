@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkflowDetailScreen: View {
     let id: String
     @State private var res = Resource<WorkflowDetail>()
+    @State private var nodeGraphFlipped = false
 
     var body: some View {
         ScreenScroll {
@@ -67,8 +68,17 @@ struct WorkflowDetailScreen: View {
             JsonView(value: d.result, defaultOpen: true)
         }
 
-        Card(title: filtered ? "Node graph · execution \(d.currentExecutionId ?? "")" : "Node graph") {
-            NodeTree(nodes: currentNodes)
+        Card(title: filtered ? "Node graph · execution \(d.currentExecutionId ?? "")" : "Node graph", right: {
+            Button {
+                nodeGraphFlipped.toggle()
+            } label: {
+                Text(nodeGraphFlipped ? "⇅ execution" : "⇅ plan")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+        }) {
+            NodeTree(nodes: currentNodes, flipped: nodeGraphFlipped)
         }
 
         Card(title: "Executions") {
