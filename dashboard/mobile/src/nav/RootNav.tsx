@@ -5,6 +5,7 @@ import type { NativeStackNavigationOptions } from "@react-navigation/native-stac
 import { AppDrawer } from "./AppDrawer";
 import { GateContext } from "./gate";
 import { WorkflowDetailScreen } from "../screens/WorkflowDetailScreen";
+import { TraceScreen } from "../screens/TraceScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { SetupScreen } from "../screens/SetupScreen";
 import { SplashScreen } from "../screens/SplashScreen";
@@ -36,6 +37,11 @@ function AppRoot() {
         name="WorkflowDetail"
         component={WorkflowDetailScreen}
         options={{ title: "Workflow" }}
+      />
+      <Stack.Screen
+        name="Trace"
+        component={TraceScreen}
+        options={{ title: "Turn trace" }}
       />
       <Stack.Screen
         name="Settings"

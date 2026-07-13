@@ -1,8 +1,10 @@
 package com.attobot.dashboard.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,6 +25,7 @@ import com.attobot.dashboard.core.WorkflowDetail
 import com.attobot.dashboard.core.field
 import com.attobot.dashboard.core.fieldOr
 import com.attobot.dashboard.core.formatMs
+import com.attobot.dashboard.core.messageIdFromLabel
 import com.attobot.dashboard.state.UiState
 import com.attobot.dashboard.state.WorkflowDetailViewModel
 import com.attobot.dashboard.state.WorkflowDetailViewModelFactory
@@ -37,6 +40,7 @@ import com.attobot.dashboard.ui.components.NodeTree
 import com.attobot.dashboard.ui.components.PullRefreshScreen
 import com.attobot.dashboard.ui.components.StatusBadge
 import com.attobot.dashboard.ui.components.TableColumn
+import com.attobot.dashboard.ui.nav.Routes
 import com.attobot.dashboard.ui.theme.accent
 import com.attobot.dashboard.ui.theme.border
 import com.attobot.dashboard.ui.theme.muted
@@ -57,16 +61,17 @@ fun WorkflowDetailScreen(
         when (s) {
             is UiState.Loading -> LoadingView()
             is UiState.Error -> ErrorState(s.message)
-            is UiState.Ready -> DetailBody(id, s.data)
+            is UiState.Ready -> DetailBody(navController, id, s.data)
         }
     }
 }
 
 @Composable
-private fun DetailBody(id: String, d: WorkflowDetail) {
+private fun DetailBody(navController: NavHostController, id: String, d: WorkflowDetail) {
     val info = d.info
     val label = info?.fieldOr("label", id) ?: id
     val statusStr = info?.fieldOr("status", "") ?: ""
+    val traceMsgId = messageIdFromLabel(label)
     val currentNodes = d.nodes.filter { it.executionId == d.currentExecutionId }
     var flipped by rememberSaveable { mutableStateOf(false) }
 
@@ -143,6 +148,22 @@ private fun DetailBody(id: String, d: WorkflowDetail) {
 
         AttobotCard(title = "Executions") {
             DataTable(rows = d.executions, columns = executionColumns())
+        }
+
+        if (traceMsgId != null) {
+            AttobotCard(title = "Turn trace · msg #$traceMsgId") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { navController.navigate(Routes.trace(traceMsgId)) }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Open turn trace", color = accent, fontSize = 13.sp)
+                    Text("›", color = muted, fontSize = 14.sp)
+                }
+            }
         }
 
         if (!d.explain.isNullOrBlank()) {

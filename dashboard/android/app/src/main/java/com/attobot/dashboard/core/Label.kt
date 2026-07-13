@@ -47,10 +47,15 @@ fun parseLabel(raw: String): ParsedLabel {
     if (parts.firstOrNull() != "attobot" || parts.size < 2) {
         return ParsedLabel(LabelType.other, null, null, raw)
     }
-    // attobot:<agent>:(loop|inbox)
-    if (parts.size == 3 && (parts[2] == "loop" || parts[2] == "inbox")) {
-        val type = LabelType.valueOf(parts[2])
-        return ParsedLabel(type, parts[1], null, "${parts[1]} ${LABEL_TEXT.getValue(type)}")
+    // attobot:<agent>:inbox
+    if (parts.size == 3 && parts[2] == "inbox") {
+        return ParsedLabel(LabelType.inbox, parts[1], null, "${parts[1]} ${LABEL_TEXT.getValue(LabelType.inbox)}")
+    }
+    // attobot:<agent>:loop  OR  attobot:<agent>:loop:<msg_id>
+    if (parts.size >= 3 && parts[2] == "loop") {
+        val ref = if (parts.size >= 4) parts[3] else null
+        val suffix = ref?.let { " · msg #$it" } ?: ""
+        return ParsedLabel(LabelType.loop, parts[1], ref, "${parts[1]} ${LABEL_TEXT.getValue(LabelType.loop)}$suffix")
     }
     // attobot:<agent>:cron:<name>
     if (parts.size >= 4 && parts[2] == "cron") {
@@ -70,4 +75,14 @@ fun parseLabel(raw: String): ParsedLabel {
         return ParsedLabel(LabelType.tool, null, parts.subList(2, parts.size).joinToString(":"), "tool msg #${parts[2]}")
     }
     return ParsedLabel(LabelType.attobot, null, null, raw)
+}
+
+/**
+ * Numeric message id embedded in a traceable label (loop/send/typing/tool), or
+ * null. Mirrors attobot.parse_instance_label on the server; used to open the
+ * turn-trace view from any of these instances.
+ */
+fun messageIdFromLabel(raw: String): Long? {
+    val match = Regex("attobot:(?:[^:]+:loop|send|tool|typing):(\\d+)").find(raw) ?: return null
+    return match.groupValues[1].toLongOrNull()
 }

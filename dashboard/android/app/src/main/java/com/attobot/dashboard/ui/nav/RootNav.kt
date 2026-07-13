@@ -56,6 +56,7 @@ import com.attobot.dashboard.ui.screens.OverviewScreen
 import com.attobot.dashboard.ui.screens.SettingsScreen
 import com.attobot.dashboard.ui.screens.SetupScreen
 import com.attobot.dashboard.ui.screens.Splash
+import com.attobot.dashboard.ui.screens.TraceScreen
 import com.attobot.dashboard.ui.screens.UsersScreen
 import com.attobot.dashboard.ui.screens.WorkflowDetailScreen
 import com.attobot.dashboard.ui.screens.WorkflowsScreen
@@ -202,6 +203,12 @@ private fun AppRoot(gateVM: GateViewModel) {
                 ) { entry ->
                     WorkflowDetailScreen(navController, entry.arguments?.getString("id").orEmpty())
                 }
+                composable(
+                    Routes.TRACE,
+                    arguments = listOf(navArgument("messageId") { type = NavType.LongType }),
+                ) { entry ->
+                    TraceScreen(navController, entry.arguments?.getLong("messageId") ?: 0L)
+                }
                 composable(Routes.SETTINGS) { SettingsScreen(gateVM) }
             }
         }
@@ -310,6 +317,7 @@ private fun titleForRoute(route: String?): String = when {
     route.startsWith("config") -> "Config"
     route.startsWith("blobs") -> "Blobs"
     route.startsWith("workflow_detail") -> "Workflow"
+    route.startsWith("trace") -> "Turn trace"
     route.startsWith("settings") -> "Settings"
     else -> ""
 }

@@ -34,6 +34,7 @@ struct WorkflowDetailScreen: View {
     private func detailBody(d: WorkflowDetail) -> some View {
         let info = d.info ?? [:]
         let label = info["label"]?.string ?? id
+        let traceMsgId = LabelParser.messageId(from: label)
         let nodes = d.nodes ?? []
         let currentNodes = nodes.filter { $0.executionId == d.currentExecutionId }
         let filtered = !currentNodes.isEmpty && currentNodes.count != nodes.count && d.currentExecutionId != nil
@@ -105,6 +106,23 @@ struct WorkflowDetailScreen: View {
                 ],
                 rows: d.executions ?? []
             )
+        }
+
+        if let traceMsgId {
+            Card(title: "Turn trace · msg #\(traceMsgId)") {
+                NavigationLink(value: Route.trace(messageId: traceMsgId)) {
+                    HStack {
+                        Text("Open turn trace")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.accent)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
 
         if let explain = d.explain, !explain.isEmpty {

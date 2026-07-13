@@ -11,6 +11,7 @@ import com.attobot.dashboard.core.ConfigRow
 import com.attobot.dashboard.core.LifecycleRow
 import com.attobot.dashboard.core.MemoryRow
 import com.attobot.dashboard.core.Overview
+import com.attobot.dashboard.core.TraceRow
 import com.attobot.dashboard.core.UserRow
 import com.attobot.dashboard.core.MessageRow
 import com.attobot.dashboard.core.WorkflowDetail
@@ -177,6 +178,16 @@ class WorkflowDetailViewModel(private val id: String) : PollingViewModel<Workflo
 class WorkflowDetailViewModelFactory(private val id: String) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T = WorkflowDetailViewModel(id) as T
+}
+
+/** Turn trace for a message id — the correlated instances (loop + tool/send). */
+class TraceViewModel(private val messageId: Long) : PollingViewModel<List<TraceRow>>(poll = true) {
+    override suspend fun fetch(): List<TraceRow> = ApiProvider.trace(messageId)
+}
+
+class TraceViewModelFactory(private val messageId: Long) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T = TraceViewModel(messageId) as T
 }
 
 /** Agents — not polled (cached ~60 s via [AgentsCache] for the filter chips). */

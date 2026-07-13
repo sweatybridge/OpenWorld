@@ -7,4 +7,5 @@ export * from "./Pager";
 export * from "./JsonView";
 export * from "./NodeTree";
 export * from "./DataTable";
+export * from "./TurnTrace";
 export * from "./Pills";

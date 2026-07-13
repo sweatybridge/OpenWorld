@@ -110,6 +110,10 @@ private struct MessageBubble: View {
                 if let tc = message.toolCallId {
                     Text("tc \(tc)").font(.system(size: 12)).foregroundStyle(Theme.muted)
                 }
+                NavigationLink(value: Route.trace(messageId: Int(message.id))) {
+                    Text("trace").font(.system(size: 12)).foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
                 Spacer()
                 Text(Format.timeAgo(message.createdAt))
                     .font(.system(size: 12))

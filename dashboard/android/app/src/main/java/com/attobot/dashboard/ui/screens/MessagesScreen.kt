@@ -42,6 +42,7 @@ import com.attobot.dashboard.ui.components.ErrorState
 import com.attobot.dashboard.ui.components.JsonView
 import com.attobot.dashboard.ui.components.LoadingView
 import com.attobot.dashboard.ui.components.PullRefreshScreen
+import com.attobot.dashboard.ui.nav.Routes
 import com.attobot.dashboard.ui.theme.accent
 import com.attobot.dashboard.ui.theme.border
 import com.attobot.dashboard.ui.theme.muted
@@ -101,13 +102,17 @@ fun MessagesScreen(
             agentId.isEmpty() -> EmptyState("Pick an agent above.")
             s is UiState.Loading -> LoadingView()
             s is UiState.Error -> ErrorState(s.message)
-            s is UiState.Ready -> MessageStream(rows = s.data, onLoadOlder = vm::loadOlder)
+            s is UiState.Ready -> MessageStream(
+                rows = s.data,
+                onLoadOlder = vm::loadOlder,
+                onTrace = { id -> navController.navigate(Routes.trace(id)) },
+            )
         }
     }
 }
 
 @Composable
-private fun MessageStream(rows: List<MessageRow>, onLoadOlder: (Long) -> Unit) {
+private fun MessageStream(rows: List<MessageRow>, onLoadOlder: (Long) -> Unit, onTrace: (Long) -> Unit) {
     if (rows.isEmpty()) {
         EmptyState("No messages.")
         return
@@ -115,7 +120,7 @@ private fun MessageStream(rows: List<MessageRow>, onLoadOlder: (Long) -> Unit) {
     val ordered = rows.asReversed() // oldest on top
     val oldest = ordered.first().id
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ordered.forEach { MessageBubble(it) }
+        ordered.forEach { MessageBubble(it, onTrace = onTrace) }
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             LoadOlderButton(onClick = { onLoadOlder(oldest) })
         }
@@ -123,7 +128,7 @@ private fun MessageStream(rows: List<MessageRow>, onLoadOlder: (Long) -> Unit) {
 }
 
 @Composable
-private fun MessageBubble(m: MessageRow) {
+private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
     val payload = m.payload
     val toolCalls = mutableListOf<JsonObject>()
     if (payload is JsonObject) {
@@ -162,6 +167,14 @@ private fun MessageBubble(m: MessageRow) {
                     m.toolCallId?.let {
                         Text("tc $it", color = muted, fontSize = 12.sp, modifier = Modifier.padding(start = 10.dp))
                     }
+                    Text(
+                        "trace",
+                        color = accent,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .padding(start = 10.dp)
+                            .clickable { onTrace(m.id) },
+                    )
                     Spacer(Modifier.weight(1f))
                     Text(timeAgo(m.createdAt), color = muted, fontSize = 12.sp)
                 }

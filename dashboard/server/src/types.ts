@@ -20,6 +20,19 @@ export interface WorkflowListResponse {
   offset: number;
 }
 
+// One row of a turn trace: the df.instances correlated to a single agent turn
+// (the loop parent + its typing/tool/send children), joined on message id.
+export interface TraceRow {
+  instance_id: string;
+  kind: string; // loop|typing|tool|send|...
+  agent_slug: string | null;
+  message_id: string | null; // bigint arrives as a string over node-postgres
+  tool_call_id: string | null;
+  status: string;
+  updated_at: string;
+  result: unknown;
+}
+
 export interface InstanceNode {
   execution_id: string;
   node_id: string;

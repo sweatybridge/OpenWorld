@@ -89,6 +89,25 @@ data class WorkflowDetail(
     val executions: List<Map<String, JsonElement>> = emptyList(),
 )
 
+// ---------------- Trace ----------------
+
+/** One row of a turn trace (loop + typing/tool/send children). message_id is a
+ * string (bigint over the wire). */
+@Serializable
+data class TraceRow(
+    @SerialName("instance_id") val instanceId: String,
+    val kind: String,
+    @SerialName("agent_slug") val agentSlug: String? = null,
+    @SerialName("message_id") val messageId: String? = null,
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    val status: String,
+    @SerialName("updated_at") val updatedAt: String,
+    val result: JsonElement? = null,
+)
+
+@Serializable
+data class TraceResponse(val rows: List<TraceRow> = emptyList())
+
 // ---------------- Agents ----------------
 
 @Serializable

@@ -18,6 +18,7 @@ object Routes {
     const val CONFIG = "config?agentId={agentId}"
     const val BLOBS = "blobs?agentId={agentId}"
     const val WORKFLOW_DETAIL = "workflow_detail/{id}"
+    const val TRACE = "trace/{messageId}"
     const val SETTINGS = "settings"
 
     fun workflows(status: String? = null, type: String? = null, agent: String? = null): String {
@@ -32,6 +33,8 @@ object Routes {
         if (agentId == null) route else "$route?agentId=${enc(agentId)}"
 
     fun workflowDetail(id: String): String = "workflow_detail/${enc(id)}"
+
+    fun trace(messageId: Long): String = "trace/${enc(messageId.toString())}"
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 }

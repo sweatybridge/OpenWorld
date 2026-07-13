@@ -13,6 +13,7 @@ enum Route: Hashable {
     case config(agentId: String? = nil)
     case blobs(agentId: String? = nil)
     case workflowDetail(id: String)
+    case trace(messageId: Int)
 }
 
 struct RootView: View {
@@ -93,6 +94,8 @@ struct RootView: View {
             BlobsScreen(initialAgentId: agentId)
         case .workflowDetail(let id):
             WorkflowDetailScreen(id: id)
+        case .trace(let messageId):
+            TraceScreen(messageId: messageId, navigate: { path.append($0) })
         }
     }
 }

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigation } from "@react-navigation/native";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { apiGet, type MessageRow } from "../lib/api";
 import { useAgents } from "../hooks";
 import { timeAgo } from "../lib/format";
 import { AgentPills, EmptyState, ErrorState, JsonView, Scroll, Spinner } from "../components";
 import { colors } from "../lib/theme";
-import type { AppDrawerScreenProps } from "../nav/types";
+import type { AppDrawerScreenProps, AppNav } from "../nav/types";
 
 type Props = AppDrawerScreenProps<"Messages">;
 
@@ -93,6 +94,7 @@ function MessageStream({
 }
 
 function MessageBubble({ m }: { m: MessageRow }) {
+  const navigation = useNavigation<AppNav>();
   const payload = m.payload as Record<string, unknown> | null;
   const toolCalls = Array.isArray(payload?.tool_calls)
     ? (payload!.tool_calls as Array<Record<string, unknown>>)
@@ -107,6 +109,9 @@ function MessageBubble({ m }: { m: MessageRow }) {
         {m.tool_call_id ? (
           <Text style={s.metaText}>tc {m.tool_call_id}</Text>
         ) : null}
+        <Pressable onPress={() => navigation.navigate("Trace", { messageId: m.id })}>
+          <Text style={s.trace}>trace</Text>
+        </Pressable>
         <Text style={s.metaTime}>{timeAgo(m.created_at)}</Text>
       </View>
       {m.content ? <Text style={s.content}>{m.content}</Text> : null}
@@ -142,6 +147,7 @@ const s = StyleSheet.create({
   meta: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 4 },
   role: { textTransform: "uppercase", fontWeight: "700", color: colors.text, fontSize: 12 },
   metaText: { color: colors.muted, fontSize: 12 },
+  trace: { color: colors.accent, fontSize: 12 },
   metaTime: { color: colors.muted, fontSize: 12, marginLeft: "auto" },
   content: { color: colors.text, fontSize: 13 },
   toolCalls: { gap: 6, marginTop: 6 },

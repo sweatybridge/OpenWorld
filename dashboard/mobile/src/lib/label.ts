@@ -31,10 +31,19 @@ export function parseLabel(raw: string): ParsedLabel {
   if (parts[0] !== "attobot" || parts.length < 2) {
     return { type: "other", agent: null, ref: null, friendly: raw };
   }
-  // attobot:<agent>:(loop|inbox)
-  if (parts.length === 3 && (parts[2] === "loop" || parts[2] === "inbox")) {
-    const type = parts[2] as "loop" | "inbox";
-    return { type, agent: parts[1], ref: null, friendly: `${parts[1]} ${LABEL_META[type].label}` };
+  // attobot:<agent>:inbox
+  if (parts.length === 3 && parts[2] === "inbox") {
+    return { type: "inbox", agent: parts[1], ref: null, friendly: `${parts[1]} ${LABEL_META.inbox.label}` };
+  }
+  // attobot:<agent>:loop  OR  attobot:<agent>:loop:<msg_id>
+  if (parts[2] === "loop") {
+    const ref = parts.length >= 4 && parts[3] ? parts[3] : null;
+    return {
+      type: "loop",
+      agent: parts[1],
+      ref,
+      friendly: `${parts[1]} ${LABEL_META.loop.label}${ref ? ` · msg #${ref}` : ""}`,
+    };
   }
   // attobot:<agent>:cron:<name>
   if (parts.length >= 4 && parts[2] === "cron") {
@@ -53,4 +62,13 @@ export function parseLabel(raw: string): ParsedLabel {
     return { type: "tool", agent: null, ref: parts.slice(2).join(":"), friendly: `tool msg #${parts[2]}` };
   }
   return { type: "attobot", agent: null, ref: null, friendly: raw };
+}
+
+// The numeric message id embedded in a traceable instance label
+// (attobot:<slug>:loop:<id>, attobot:send:<id>, attobot:typing:<id>,
+// attobot:tool:<id>:<tc>), or null. Mirrors attobot.parse_instance_label on the
+// server; used to open the turn-trace view from any of these instances.
+export function messageIdFromLabel(raw: string): number | null {
+  const m = raw.match(/attobot:(?:[^:]+:loop|send|tool|typing):(\d+)/);
+  return m ? Number(m[1]) : null;
 }

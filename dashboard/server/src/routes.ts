@@ -15,6 +15,7 @@ import {
   listMemory,
   listUsers,
   listWorkflows,
+  traceTurn,
   workflowDetail,
 } from "./queries.js";
 import { maskConfig } from "./mask.js";
@@ -77,6 +78,17 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/agents", async () => ({ rows: await listAgents() }));
+
+  // Cross-workflow trace for one agent turn (loop + tool/send/typing children).
+  app.get("/api/trace/:messageId", async (req, reply) => {
+    const { messageId } = req.params as { messageId: string };
+    const id = parseIntOrNull(messageId);
+    if (id === null) {
+      reply.code(400);
+      return { error: "bad message id" };
+    }
+    return { rows: await traceTurn(id) };
+  });
 
   app.get("/api/agents/:id/messages", async (req, reply) => {
     const { id } = req.params as { id: string };

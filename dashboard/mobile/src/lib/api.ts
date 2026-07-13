@@ -88,6 +88,19 @@ export interface WorkflowDetail {
   executions: Array<Record<string, unknown>>;
 }
 
+// One row of a turn trace: the df.instances correlated to a single agent turn
+// (loop parent + typing/tool/send children), joined on message id.
+export interface TraceRow {
+  instance_id: string;
+  kind: string; // loop|typing|tool|send|...
+  agent_slug: string | null;
+  message_id: string | null; // bigint arrives as a string
+  tool_call_id: string | null;
+  status: string;
+  updated_at: string;
+  result: unknown;
+}
+
 export interface Overview {
   metrics: Record<string, string | number> | null;
   worker: {

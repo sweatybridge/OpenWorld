@@ -37,10 +37,15 @@ enum LabelParser {
         guard parts.first == "attobot", parts.count >= 2 else {
             return ParsedLabel(type: .other, agent: nil, ref: nil, friendly: raw)
         }
-        // attobot:<agent>:(loop|inbox)
-        if parts.count == 3, let t = LabelType(rawValue: parts[2]), t == .loop || t == .inbox {
-            let label = meta[t]!.label
-            return ParsedLabel(type: t, agent: parts[1], ref: nil, friendly: "\(parts[1]) \(label)")
+        // attobot:<agent>:inbox
+        if parts.count == 3, parts[2] == LabelType.inbox.rawValue {
+            return ParsedLabel(type: .inbox, agent: parts[1], ref: nil, friendly: "\(parts[1]) \(meta[.inbox]!.label)")
+        }
+        // attobot:<agent>:loop  OR  attobot:<agent>:loop:<msg_id>
+        if parts.count >= 3, parts[2] == LabelType.loop.rawValue {
+            let ref = parts.count >= 4 ? parts[3] : nil
+            let suffix = ref.map { " · msg #\($0)" } ?? ""
+            return ParsedLabel(type: .loop, agent: parts[1], ref: ref, friendly: "\(parts[1]) \(meta[.loop]!.label)\(suffix)")
         }
         // attobot:<agent>:cron:<name>
         if parts.count >= 4, parts[2] == "cron" {
@@ -60,5 +65,15 @@ enum LabelParser {
             return ParsedLabel(type: .tool, agent: nil, ref: parts[2...].joined(separator: ":"), friendly: "tool msg #\(parts[2])")
         }
         return ParsedLabel(type: .attobot, agent: nil, ref: nil, friendly: raw)
+    }
+
+    /// Numeric message id embedded in a traceable label (loop/send/typing/tool),
+    /// or nil. Mirrors attobot.parse_instance_label on the server; used to open
+    /// the turn-trace view from any of these instances.
+    static func messageId(from raw: String) -> Int? {
+        guard let regex = try? NSRegularExpression(pattern: "attobot:(?:[^:]+:loop|send|tool|typing):(\\d+)") else { return nil }
+        let ns = raw as NSString
+        guard let m = regex.firstMatch(in: raw, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges >= 2 else { return nil }
+        return Int(ns.substring(with: m.range(at: 1)))
     }
 }
