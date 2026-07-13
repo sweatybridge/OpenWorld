@@ -38,7 +38,9 @@ a:hover { text-decoration: underline; }
   padding: 0 16px; height: 46px;
   background: var(--panel); border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10; overflow-x: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
 }
+.topnav::-webkit-scrollbar { display: none; }
 .topnav .brand { font-weight: 700; color: var(--text); margin-right: 12px; white-space: nowrap; }
 .topnav .brand span { color: var(--muted); font-weight: 400; }
 .topnav a {
@@ -81,6 +83,7 @@ h2 { font-size: 14px; margin: 0; text-transform: uppercase; letter-spacing: .04e
 .data-table tr.clickable { cursor: pointer; }
 .data-table tr.clickable:hover { background: var(--panel-2); }
 .data-table td.empty, .empty { color: var(--muted); text-align: center; padding: 24px; }
+.cell-break { overflow-wrap: anywhere; }
 
 /* badges */
 .badge, .pill {
@@ -105,7 +108,7 @@ h2 { font-size: 14px; margin: 0; text-transform: uppercase; letter-spacing: .04e
 .counts .num { color: var(--muted); margin-left: auto; }
 
 /* dots / status */
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--pend); vertical-align: middle; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--pend); vertical-align: middle; margin-right: 6px; }
 .dot.alive { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .dot.dead { background: var(--err); }
 
@@ -137,7 +140,7 @@ h2 { font-size: 14px; margin: 0; text-transform: uppercase; letter-spacing: .04e
 .node-line.st-running .node-marker { color: var(--run); }
 .node-type { color: var(--accent); font-weight: 600; }
 .node-name { color: var(--warn); }
-.node-query { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60ch; }
+.node-query { color: var(--muted); overflow-wrap: anywhere; min-width: 0; flex: 1 1 auto; }
 .node-result summary { color: var(--accent); cursor: pointer; }
 
 .explain { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; }

@@ -201,9 +201,7 @@ function NodeLine({ node }: { node: TreeNode }) {
       <span className="node-type">{node.node_type}</span>
       {node.result_name && <span className="node-name">|=&gt; {node.result_name}</span>}
       {queryOne && (
-        <code className="node-query" title={node.query ?? ""}>
-          {queryOne.length > 90 ? queryOne.slice(0, 90) + "…" : queryOne}
-        </code>
+        <code className="node-query" title={node.query ?? ""}>{queryOne}</code>
       )}
       {node.result && (
         <details className="node-result">

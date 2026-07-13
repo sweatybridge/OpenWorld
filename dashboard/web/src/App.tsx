@@ -86,7 +86,7 @@ function Shell() {
   return (
     <div className="layout">
       <nav className="topnav">
-        <Link to="/" className="brand">attobot<span>· dashboard</span></Link>
+        <Link to="/" className="brand">attobot<span> · dashboard</span></Link>
         {NAV.map(([to, label]) => (
           <NavLink key={to} to={to} end={to === "/"}>{label}</NavLink>
         ))}

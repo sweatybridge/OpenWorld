@@ -25,7 +25,7 @@ function AgentSelect({ value, onChange }: { value: string; onChange: (v: string)
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">all agents</option>
-      {(data ?? []).map((a) => <option key={a.id} value={a.id}>{a.slug}</option>)}
+      {(data ?? []).map((a) => <option key={a.id} value={a.slug}>{a.slug}</option>)}
     </select>
   );
 }
@@ -136,7 +136,7 @@ export function OverviewPage() {
             rows={recent.data?.rows ?? []}
             columns={[
               { key: "id", header: "id", cell: (r) => <Link to={`/workflows/${r.id}`}><code>{r.id}</code></Link> },
-              { key: "label", header: "label", cell: (r) => r.label },
+              { key: "label", header: "label", cell: (r) => <span className="cell-break">{r.label}</span> },
               { key: "type", header: "type", cell: (r) => <TypePill type={r.type} /> },
               { key: "status", header: "status", cell: (r) => <StatusBadge status={r.status} /> },
               { key: "updated", header: "updated", cell: (r) => <span title={formatDateTime(r.updated_at)}>{timeAgo(r.updated_at)}</span> },
@@ -181,7 +181,7 @@ export function WorkflowsPage() {
   const rows = query.data?.rows ?? [];
   const columns: Column<typeof rows[number]>[] = [
     { key: "id", header: "id", cell: (r) => <Link to={`/workflows/${r.id}`}><code>{r.id}</code></Link> },
-    { key: "label", header: "label", cell: (r) => <span title={r.label}>{r.label}</span> },
+    { key: "label", header: "label", cell: (r) => <span title={r.label} className="cell-break">{r.label}</span> },
     { key: "type", header: "type", cell: (r) => <TypePill type={r.type} /> },
     { key: "agent", header: "agent", cell: (r) => r.agent ?? "—" },
     { key: "status", header: "status", cell: (r) => <StatusBadge status={r.status} /> },
