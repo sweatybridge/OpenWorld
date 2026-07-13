@@ -18,7 +18,7 @@ struct TraceScreen: View {
                 Card(title: "Correlated instances") {
                     DataTable(
                         columns: [
-                            DataTableColumn<TraceRow>(id: "kind", title: "kind", width: 90) { TypePill(type: $0.kind) },
+                            DataTableColumn<TraceRow>(id: "kind", title: "kind", width: 90) { TypePill($0.kind) },
                             DataTableColumn<TraceRow>(id: "instance", title: "instance", width: 110) { r in
                                 Text(String(r.instanceId.prefix(8)))
                                     .font(.system(size: 12, design: .monospaced))
