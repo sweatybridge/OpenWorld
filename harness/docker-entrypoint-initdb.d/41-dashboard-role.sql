@@ -27,12 +27,19 @@ SELECT df.grant_usage('attobot_dashboard');
 
 -- 3. Read access to the attobot domain. RLS is ENABLED but not FORCE on these
 --    tables, and BYPASSRLS bypasses it anyway — but the SELECT privilege is still
---    required. No write/sequence privileges are granted.
+--    required. No write/sequence privileges are granted. EXECUTE on the helpers is
+--    needed because the view/trace_turn run as INVOKER (the dashboard role).
 GRANT USAGE ON SCHEMA attobot, attotools TO attobot_dashboard;
 GRANT SELECT
   ON attobot.agents, attobot.models, attobot.config, attobot.messages,
      attobot.memory, attobot.memory_sources, attobot.lifecycle, attobot.users,
-     attotools.blobs
+     attotools.blobs, attobot.instance_index
+  TO attobot_dashboard;
+GRANT EXECUTE ON FUNCTION
+  attobot.trace_turn(bigint),
+  attobot.turn_trigger_id(bigint),
+  attobot.parse_instance_label(text),
+  attobot._instance_result(text)
   TO attobot_dashboard;
 
 -- 4. Worker-liveness table (internal; may or may not be covered by grant_usage).
@@ -43,15 +50,3 @@ BEGIN
 EXCEPTION
   WHEN undefined_table THEN NULL;
 END $$;
-
--- Dashboard read access. USAGE on the attobot schema is already granted in
--- 41-dashboard-role.sql; these expose only the new read-only objects. EXECUTE
--- on the helpers is needed because the view/trace_turn run as INVOKER (the
--- dashboard role) and call them with that role's privileges.
-GRANT SELECT ON attobot.instance_index TO attobot_dashboard;
-GRANT EXECUTE ON FUNCTION
-  attobot.trace_turn(bigint),
-  attobot.turn_trigger_id(bigint),
-  attobot.parse_instance_label(text),
-  attobot._instance_result(text)
-  TO attobot_dashboard;
