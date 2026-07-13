@@ -43,6 +43,9 @@ interface AttobotApi {
     @GET("api/workflows/{id}")
     suspend fun workflow(@Path("id") id: String): WorkflowDetail
 
+    @GET("api/trace/{messageId}")
+    suspend fun trace(@Path("messageId") messageId: Long): TraceResponse
+
     @GET("api/agents")
     suspend fun agents(): AgentsResponse
 
@@ -182,6 +185,8 @@ object ApiProvider {
     ): WorkflowList = req { workflows(status?.ifBlank { null }, type?.ifBlank { null }, agent?.ifBlank { null }, q?.ifBlank { null }, limit, offset) }
 
     suspend fun workflow(id: String): WorkflowDetail = req { workflow(id) }
+
+    suspend fun trace(messageId: Long): List<TraceRow> = req { trace(messageId) }.rows
 
     suspend fun agents(): List<AgentRow> = req { agents() }.rows
 

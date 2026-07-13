@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { apiGet, AuthError, getToken, setToken } from "./api";
 import {
   BlobsPage, ConfigPage, LifecyclePage, MemoryPage, MessagesPage,
-  OverviewPage, UsersPage, WorkflowsPage, WorkflowDetailPage, AgentsPage,
+  OverviewPage, UsersPage, WorkflowsPage, WorkflowDetailPage, AgentsPage, TracePage,
 } from "./pages";
 import { ErrorState, Spinner } from "./components";
 
@@ -107,6 +107,7 @@ function Shell() {
           <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/messages" element={<MessagesPage />} />
+          <Route path="/trace/:messageId" element={<TracePage />} />
           <Route path="/memory" element={<MemoryPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/lifecycle" element={<LifecyclePage />} />

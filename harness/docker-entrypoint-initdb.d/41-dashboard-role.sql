@@ -43,3 +43,15 @@ BEGIN
 EXCEPTION
   WHEN undefined_table THEN NULL;
 END $$;
+
+-- Dashboard read access. USAGE on the attobot schema is already granted in
+-- 41-dashboard-role.sql; these expose only the new read-only objects. EXECUTE
+-- on the helpers is needed because the view/trace_turn run as INVOKER (the
+-- dashboard role) and call them with that role's privileges.
+GRANT SELECT ON attobot.instance_index TO attobot_dashboard;
+GRANT EXECUTE ON FUNCTION
+  attobot.trace_turn(bigint),
+  attobot.turn_trigger_id(bigint),
+  attobot.parse_instance_label(text),
+  attobot._instance_result(text)
+  TO attobot_dashboard;

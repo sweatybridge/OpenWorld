@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ConfigRow } from "./api";
+import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ConfigRow, type TraceRow } from "./api";
+import { messageIdFromLabel } from "./label";
 import {
   Card, Column, DataTable, EmptyState, ErrorState, JsonView, NodeTree, Pager,
   Spinner, StatusBadge, TypePill,
@@ -288,9 +289,70 @@ export function WorkflowDetailPage() {
         />
       </Card>
 
+      <TurnTraceCard label={label} />
+
       {d.explain && (
         <Card title="df.explain">
           <pre className="explain">{d.explain}</pre>
+        </Card>
+      )}
+    </>
+  );
+}
+
+// The correlated instances for the turn this instance belongs to (loop parent +
+// typing/tool/send children), looked up by the message id embedded in the label.
+// Only shown for traceable labels (loop/send/tool/typing).
+function TurnTraceCard({ label }: { label: string }) {
+  const messageId = messageIdFromLabel(label);
+  if (messageId == null) return null;
+  return (
+    <Card title={`Turn trace · msg #${messageId}`} right={<Link to={`/trace/${messageId}`} className="link">open ›</Link>}>
+      <TurnTraceTable messageId={messageId} />
+    </Card>
+  );
+}
+
+function TurnTraceTable({ messageId }: { messageId: number }) {
+  const trace = useQuery({
+    queryKey: ["trace", messageId],
+    queryFn: () => apiGet<{ rows: TraceRow[] }>(`/api/trace/${messageId}`),
+    refetchInterval: REFRESH_MS,
+  });
+  if (trace.isLoading) return <Spinner />;
+  if (trace.error) return <ErrorState message={(trace.error as Error).message} />;
+  const rows = trace.data?.rows ?? [];
+  if (rows.length === 0) return <EmptyState>No correlated instances for this turn.</EmptyState>;
+  const columns: Column<TraceRow>[] = [
+    { key: "kind", header: "kind", cell: (r) => <TypePill type={r.kind} /> },
+    { key: "id", header: "instance", cell: (r) => <Link to={`/workflows/${r.instance_id}`} title={r.instance_id}><code>{r.instance_id.slice(0, 8)}</code></Link> },
+    { key: "msg", header: "message", cell: (r) => (r.message_id ? `#${r.message_id}` : "—") },
+    { key: "tc", header: "tool call", cell: (r) => (r.tool_call_id ? <code>{r.tool_call_id}</code> : "—") },
+    { key: "status", header: "status", cell: (r) => <StatusBadge status={r.status} /> },
+    { key: "updated", header: "updated", cell: (r) => <span title={formatDateTime(r.updated_at)}>{timeAgo(r.updated_at)}</span> },
+    { key: "result", header: "result", cell: (r) => <JsonView value={r.result} /> },
+  ];
+  return <DataTable rows={rows} columns={columns} />;
+}
+
+// ---------------------------------------------------------------- trace
+
+// Full turn trace for any message id. Resolves the turn's trigger on the server,
+// so it works from a user, assistant, or tool message alike.
+export function TracePage() {
+  const { messageId } = useParams<{ messageId: string }>();
+  const id = Number(messageId);
+  return (
+    <>
+      <div className="detail-head">
+        <Link to="/messages" className="back">‹ messages</Link>
+        <h1>Turn trace · msg #{messageId}</h1>
+      </div>
+      {!Number.isFinite(id) ? (
+        <ErrorState message="bad message id" />
+      ) : (
+        <Card title="Correlated instances">
+          <TurnTraceTable messageId={id} />
         </Card>
       )}
     </>
@@ -386,6 +448,7 @@ function MessageBubble({ m }: { m: MessageRow }) {
         <span className="msg-id">#{m.id}</span>
         {m.channel && <span className="msg-chan">{m.channel}</span>}
         {m.tool_call_id && <span className="msg-chan">tc {m.tool_call_id}</span>}
+        <Link to={`/trace/${m.id}`} className="link" title="Trace this turn's workflows">trace</Link>
         <span className="msg-time" title={formatDateTime(m.created_at)}>{timeAgo(m.created_at)}</span>
       </div>
       {m.content && <div className="msg-content">{m.content}</div>}

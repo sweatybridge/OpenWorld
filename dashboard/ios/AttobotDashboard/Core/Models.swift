@@ -114,6 +114,32 @@ struct WorkflowDetail: Codable {
     }
 }
 
+// MARK: - Trace
+
+/// One row of a turn trace: the df.instances correlated to a single agent turn
+/// (loop parent + typing/tool/send children), joined on message id.
+struct TraceRow: Codable, Hashable {
+    var instanceId: String
+    var kind: String
+    var agentSlug: String?
+    var messageId: String?
+    var toolCallId: String?
+    var status: String
+    var updatedAt: String
+    var result: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case instanceId = "instance_id"
+        case kind
+        case agentSlug = "agent_slug"
+        case messageId = "message_id"
+        case toolCallId = "tool_call_id"
+        case status
+        case updatedAt = "updated_at"
+        case result
+    }
+}
+
 // MARK: - Agents
 
 struct AgentRow: Codable, Hashable {

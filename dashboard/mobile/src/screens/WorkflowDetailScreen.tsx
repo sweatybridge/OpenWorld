@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { apiGet, type WorkflowDetail } from "../lib/api";
 import { REFRESH_MS } from "../hooks";
 import { formatMs } from "../lib/format";
+import { messageIdFromLabel } from "../lib/label";
 import {
   Card,
   DataTable,
@@ -14,6 +15,7 @@ import {
   Scroll,
   Spinner,
   StatusBadge,
+  TurnTraceTable,
 } from "../components";
 import { colors } from "../lib/theme";
 import type { WorkflowDetailScreenProps } from "../nav/types";
@@ -45,6 +47,7 @@ export function WorkflowDetailScreen({ route }: Props) {
 
   const info = (d.info ?? {}) as Record<string, unknown>;
   const label = String(info.label ?? id);
+  const traceMsgId = messageIdFromLabel(label);
   const currentNodes = d.nodes.filter(
     (n) => n.execution_id === d.current_execution_id,
   );
@@ -146,6 +149,12 @@ export function WorkflowDetailScreen({ route }: Props) {
           ]}
         />
       </Card>
+
+      {traceMsgId != null ? (
+        <Card title={`Turn trace · msg #${traceMsgId}`}>
+          <TurnTraceTable messageId={traceMsgId} />
+        </Card>
+      ) : null}
 
       {d.explain ? (
         <Card title="df.explain">

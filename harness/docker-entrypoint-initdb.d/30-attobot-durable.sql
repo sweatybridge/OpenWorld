@@ -19,7 +19,10 @@ SET search_path = attobot, attotools, public, pg_temp
 AS $$
 DECLARE
   v_agent_id bigint := attobot.agent_id(p_agent_slug);
-  v_label text := format('attobot:%s:loop', p_agent_slug);
+  -- Embed the trigger message id so a turn can be traced across workflows by a
+  -- single correlation key (tool/send/typing instances already key on a message
+  -- id; now the loop does too). See attobot.trace_turn / attobot.instance_index.
+  v_label text := format('attobot:%s:loop:%s', p_agent_slug, coalesce(p_trigger_message_id::text, '0'));
   v_existing text;
   v_max_turn integer;
   v_acting_role text;
@@ -32,10 +35,13 @@ DECLARE
   v_instance text;
 BEGIN
   -- gate: a single loop per agent at a time (a running loop reads recent
-  -- history, so it absorbs messages that arrive mid-turn)
+  -- history, so it absorbs messages that arrive mid-turn). The loop label is now
+  -- per-trigger (attobot:<slug>:loop:<msg_id>), so prefix-match any running loop
+  -- for this agent instead of comparing the full per-trigger label for equality.
   SELECT id INTO v_existing
     FROM df.instances
-    WHERE label = v_label AND status IN ('pending', 'running')
+    WHERE label LIKE format('attobot:%s:loop%%', p_agent_slug)
+      AND status IN ('pending', 'running')
     LIMIT 1;
   IF v_existing IS NOT NULL THEN
     RETURN v_existing;

@@ -26,6 +26,7 @@ export type DrawerParamList = {
 export type RootStackParamList = {
   Main: undefined;
   WorkflowDetail: { id: string };
+  Trace: { messageId: number };
   Settings: undefined;
 };
 
@@ -46,6 +47,11 @@ export type AppNav = CompositeNavigationProp<
 export type WorkflowDetailScreenProps = NativeStackScreenProps<
   RootStackParamList,
   "WorkflowDetail"
+>;
+
+export type TraceScreenProps = NativeStackScreenProps<
+  RootStackParamList,
+  "Trace"
 >;
 
 export type SettingsScreenProps = NativeStackScreenProps<

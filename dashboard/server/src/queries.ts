@@ -5,6 +5,7 @@ import type {
   InstanceNode,
   MessageRow,
   OverviewResponse,
+  TraceRow,
   WorkflowRow,
 } from "./types.js";
 
@@ -51,20 +52,10 @@ export async function getStatusCounts(): Promise<Array<{ status: string; count: 
 
 export async function getTypeCounts(): Promise<Array<{ type: string; count: string }>> {
   const { rows } = await query<{ type: string; count: string }>(`
-    SELECT type, count(*)::text AS count FROM (
-      SELECT
-        CASE
-          WHEN label ~ '^attobot:[^:]+:loop$'   THEN 'loop'
-          WHEN label ~ '^attobot:[^:]+:inbox$'  THEN 'inbox'
-          WHEN label ~ '^attobot:[^:]+:cron:'   THEN 'cron'
-          WHEN label ~ '^attobot:send:'         THEN 'send'
-          WHEN label ~ '^attobot:tool:'         THEN 'tool'
-          WHEN label ~ '^attobot:typing:'       THEN 'typing'
-          WHEN label LIKE 'attobot:%'           THEN 'attobot'
-          ELSE 'other'
-        END AS type
-      FROM df.instances
-    ) t GROUP BY type ORDER BY count DESC
+    SELECT kind AS type, count(*)::text AS count
+    FROM attobot.instance_index
+    GROUP BY kind
+    ORDER BY count DESC
   `);
   return rows;
 }
@@ -74,27 +65,12 @@ export async function getTypeCounts(): Promise<Array<{ type: string; count: stri
 // ---------------------------------------------------------------------------
 
 const WORKFLOW_LIST_SQL = `
-  WITH labeled AS (
-    SELECT id, label, status, submitted_by, database AS db, updated_at,
-      CASE
-        WHEN label ~ '^attobot:[^:]+:loop$'   THEN 'loop'
-        WHEN label ~ '^attobot:[^:]+:inbox$'  THEN 'inbox'
-        WHEN label ~ '^attobot:[^:]+:cron:'   THEN 'cron'
-        WHEN label ~ '^attobot:send:'         THEN 'send'
-        WHEN label ~ '^attobot:tool:'         THEN 'tool'
-        WHEN label ~ '^attobot:typing:'       THEN 'typing'
-        WHEN label LIKE 'attobot:%'           THEN 'attobot'
-        ELSE 'other'
-      END AS type,
-      COALESCE((regexp_match(label, '^attobot:([^:]+):(loop|inbox|cron)'))[1], '') AS agent
-    FROM df.instances
-  )
-  SELECT id, label, status, submitted_by, db, updated_at, type,
-         NULLIF(agent, '') AS agent
-  FROM labeled
+  SELECT id, label, status, submitted_by, db, updated_at,
+         kind AS type, agent_slug AS agent
+  FROM attobot.instance_index
   WHERE ($1::text IS NULL OR status = $1)
-    AND ($2::text IS NULL OR type = $2)
-    AND ($3::text IS NULL OR agent = $3)
+    AND ($2::text IS NULL OR kind = $2)
+    AND ($3::text IS NULL OR agent_slug = $3)
     AND ($4::text IS NULL OR label ILIKE '%' || $4 || '%' OR id ILIKE '%' || $4 || '%')
   ORDER BY updated_at DESC
   LIMIT $5 OFFSET $6`;
@@ -125,25 +101,11 @@ export async function listWorkflows(opts: {
 
 // Separate, correct count (no limit/offset).
 const WORKFLOW_COUNT_SQL = `
-  WITH labeled AS (
-    SELECT id, label, status,
-      CASE
-        WHEN label ~ '^attobot:[^:]+:loop$'   THEN 'loop'
-        WHEN label ~ '^attobot:[^:]+:inbox$'  THEN 'inbox'
-        WHEN label ~ '^attobot:[^:]+:cron:'   THEN 'cron'
-        WHEN label ~ '^attobot:send:'         THEN 'send'
-        WHEN label ~ '^attobot:tool:'         THEN 'tool'
-        WHEN label ~ '^attobot:typing:'       THEN 'typing'
-        WHEN label LIKE 'attobot:%'           THEN 'attobot'
-        ELSE 'other'
-      END AS type,
-      COALESCE((regexp_match(label, '^attobot:([^:]+):(loop|inbox|cron)'))[1], '') AS agent
-    FROM df.instances
-  )
-  SELECT count(*)::text FROM labeled
+  SELECT count(*)::text
+  FROM attobot.instance_index
   WHERE ($1::text IS NULL OR status = $1)
-    AND ($2::text IS NULL OR type = $2)
-    AND ($3::text IS NULL OR agent = $3)
+    AND ($2::text IS NULL OR kind = $2)
+    AND ($3::text IS NULL OR agent_slug = $3)
     AND ($4::text IS NULL OR label ILIKE '%' || $4 || '%' OR id ILIKE '%' || $4 || '%')`;
 
 export async function countWorkflows(opts: {
@@ -199,6 +161,18 @@ export async function workflowDetail(id: string) {
     currentFromInfo ?? (nodes[0]?.execution_id ?? null);
 
   return { info, explain, result, nodes, current_execution_id, executions };
+}
+
+// Cross-workflow trace for one agent turn: the loop parent plus its typing /
+// tool / send children, joined on the message ids embedded in their labels.
+export async function traceTurn(messageId: number): Promise<TraceRow[]> {
+  const { rows } = await query<TraceRow>(
+    `SELECT instance_id, kind, agent_slug, message_id::text, tool_call_id,
+            status, updated_at, result
+     FROM attobot.trace_turn($1)`,
+    [messageId]
+  );
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
