@@ -212,7 +212,7 @@ export async function listAgentMessages(
 }
 
 // ---------------------------------------------------------------------------
-// Memory / users / lifecycle / config / blobs
+// Memory / users / config / blobs
 // ---------------------------------------------------------------------------
 
 export async function listMemory(agentId: number | null) {
@@ -233,18 +233,6 @@ export async function listUsers() {
   const { rows } = await query(
     `SELECT id, channel, external_id, username, display_name, tier, payload, created_at, updated_at
      FROM attobot.users ORDER BY updated_at DESC LIMIT 500`
-  );
-  return rows;
-}
-
-export async function listLifecycle(agentId: number | null, limit: number) {
-  const cap = Math.min(Math.max(limit, 1), 1000);
-  const { rows } = await query(
-    `SELECT id, agent_id, event, detail, created_at
-     FROM attobot.lifecycle
-     WHERE ($1::bigint IS NULL OR agent_id = $1)
-     ORDER BY id DESC LIMIT $2`,
-    [agentId, cap]
   );
   return rows;
 }

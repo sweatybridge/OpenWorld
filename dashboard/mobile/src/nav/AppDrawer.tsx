@@ -8,7 +8,6 @@ import { AgentsScreen } from "../screens/AgentsScreen";
 import { MessagesScreen } from "../screens/MessagesScreen";
 import { MemoryScreen } from "../screens/MemoryScreen";
 import { UsersScreen } from "../screens/UsersScreen";
-import { LifecycleScreen } from "../screens/LifecycleScreen";
 import { ConfigScreen } from "../screens/ConfigScreen";
 import { BlobsScreen } from "../screens/BlobsScreen";
 
@@ -25,7 +24,7 @@ const drawerScreenOptions = {
   drawerInactiveTintColor: colors.muted,
 };
 
-// The 10 dashboard screens as drawer routes — the mobile analogue of the web
+// The dashboard screens as drawer routes — the mobile analogue of the web
 // top-nav bar. WorkflowDetail + Settings live in the parent stack (pushed/modal).
 export function AppDrawer() {
   return (
@@ -40,7 +39,6 @@ export function AppDrawer() {
       <Drawer.Screen name="Messages" component={MessagesScreen} options={{ title: "Messages" }} />
       <Drawer.Screen name="Memory" component={MemoryScreen} options={{ title: "Memory" }} />
       <Drawer.Screen name="Users" component={UsersScreen} options={{ title: "Users" }} />
-      <Drawer.Screen name="Lifecycle" component={LifecycleScreen} options={{ title: "Lifecycle" }} />
       <Drawer.Screen name="Config" component={ConfigScreen} options={{ title: "Config" }} />
       <Drawer.Screen name="Blobs" component={BlobsScreen} options={{ title: "Blobs" }} />
     </Drawer.Navigator>

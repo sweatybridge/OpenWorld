@@ -8,7 +8,6 @@ import com.attobot.dashboard.core.ApiProvider
 import com.attobot.dashboard.core.AuthException
 import com.attobot.dashboard.core.BlobRow
 import com.attobot.dashboard.core.ConfigRow
-import com.attobot.dashboard.core.LifecycleRow
 import com.attobot.dashboard.core.MemoryRow
 import com.attobot.dashboard.core.Overview
 import com.attobot.dashboard.core.TraceRow
@@ -236,10 +235,6 @@ abstract class AgentFilteredViewModel<T>(poll: Boolean) : PollingViewModel<T>(po
 
 class MemoryViewModel : AgentFilteredViewModel<List<MemoryRow>>(poll = false) {
     override suspend fun fetch(): List<MemoryRow> = ApiProvider.memory(agentIdOrAll())
-}
-
-class LifecycleViewModel : AgentFilteredViewModel<List<LifecycleRow>>(poll = true) {
-    override suspend fun fetch(): List<LifecycleRow> = ApiProvider.lifecycle(agentIdOrAll(), limit = 200)
 }
 
 class ConfigViewModel : AgentFilteredViewModel<List<ConfigRow>>(poll = false) {

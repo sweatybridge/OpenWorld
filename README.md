@@ -6,9 +6,9 @@ respond safely to unknown numbers by keeping the conversation stream, user
 identity ledger, and access boundaries inside PostgreSQL.
 
 All agent loops run as `pg_durable` workflows, so a turn can survive database
-restarts and resume from its last checkpoint. The full lifecycle is captured as
-events in the database, so every turn, tool call, inbox update, and operational
-change is available for auditing, replay, and debugging.
+restarts and resume from its last checkpoint. Every turn, tool call, and inbox
+update is recorded as a workflow instance and message rows, available for replay
+and debugging.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details on the design
 philosophy, execution model, and access permission matrix.
@@ -38,8 +38,6 @@ Detailed configuration, seeding, Telegram, and dashboard setup lives in
   links to the messages it was constructed from via `attobot.memory_sources`.
 - `attobot.memory_sources`: junction table backing memory's source messages;
   composite foreign keys force same-agent integrity and cascade on delete.
-- `attobot.lifecycle`: append-only audit log of operational events (agent
-  ensure, message appends, telegram poll/send outcomes, security markers).
 - `attobot.users`: channel-agnostic identity ledger. One row per
   `(channel, external_id)`; telegram intake (`poll_messages` → `upsert_user`)
   upserts senders, and `tier` maps a user to an RLS role suffix

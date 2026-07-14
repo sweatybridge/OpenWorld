@@ -5,7 +5,7 @@ codebase that ships to both platforms, talking to the **same read-only `/api/*`*
 endpoints as the web app and gated by the **same optional bearer token**.
 
 Full parity with the web console: Overview, Workflows (+ detail / node graph),
-Agents, Messages, Memory, Users, Lifecycle, Config, Blobs.
+Agents, Messages, Memory, Users, Config, Blobs.
 
 ## Stack
 
@@ -28,7 +28,7 @@ dashboard/mobile/
     nav/    RootNav.tsx AppDrawer.tsx DrawerContent.tsx types.ts gate.ts
     components/  Scroll States Badge Card KeyValue JsonView NodeTree Pager DataTable Pills
     screens/     Overview Workflows WorkflowDetail Agents Messages Memory Users
-                 Lifecycle Config Blobs Setup Settings (+ Splash / BackendDown)
+                 Config Blobs Setup Settings (+ Splash / BackendDown)
     hooks.ts        REFRESH_MS, STATUS/TYPE options, useAgents
 ```
 

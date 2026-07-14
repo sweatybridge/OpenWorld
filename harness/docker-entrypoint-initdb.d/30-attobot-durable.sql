@@ -40,7 +40,7 @@ BEGIN
   -- for this agent instead of comparing the full per-trigger label for equality.
   SELECT id INTO v_existing
     FROM df.instances
-    WHERE label LIKE format('attobot:%s:loop%%', p_agent_slug)
+    WHERE label LIKE format('attobot:%s:loop:%%', p_agent_slug)
       AND status IN ('pending', 'running')
     LIMIT 1;
   IF v_existing IS NOT NULL THEN

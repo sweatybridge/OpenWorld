@@ -11,7 +11,6 @@ import {
   listAgents,
   listBlobs,
   listConfig,
-  listLifecycle,
   listMemory,
   listUsers,
   listWorkflows,
@@ -109,12 +108,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/users", async () => ({ rows: await listUsers() }));
-
-  app.get("/api/lifecycle", async (req) => {
-    const q = req.query as Record<string, string | undefined>;
-    const limit = parseInt(q.limit ?? "200", 10) || 200;
-    return { rows: await listLifecycle(parseIntOrNull(q.agent_id), limit) };
-  });
 
   app.get("/api/config", async (req) => {
     const q = req.query as Record<string, string | undefined>;

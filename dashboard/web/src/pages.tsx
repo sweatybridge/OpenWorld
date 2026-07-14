@@ -528,41 +528,6 @@ export function UsersPage() {
   );
 }
 
-// ---------------------------------------------------------------- lifecycle
-
-export function LifecyclePage() {
-  const [params, setParams] = useSearchParams();
-  const agentId = params.get("agent_id") ?? "";
-  const query = useQuery({
-    queryKey: ["lifecycle", agentId],
-    queryFn: () => apiGet<{ rows: Array<Record<string, unknown>> }>(
-      `/api/lifecycle?limit=200` + (agentId ? `&agent_id=${agentId}` : "")
-    ),
-    refetchInterval: REFRESH_MS,
-  });
-  const rows = query.data?.rows ?? [];
-  return (
-    <>
-      <h1>Lifecycle</h1>
-      <div className="filters">
-        <AgentSelect value={agentId} onChange={(v) => { const n = new URLSearchParams(params); v ? n.set("agent_id", v) : n.delete("agent_id"); setParams(n); }} />
-      </div>
-      {query.error ? <ErrorState message={(query.error as Error).message} /> : query.isLoading ? <Spinner /> : (
-        <DataTable
-          rows={rows}
-          columns={[
-            { key: "id", header: "id", cell: (r) => <code>{String(r.id)}</code> },
-            { key: "agent", header: "agent", cell: (r) => String(r.agent_id ?? "—") },
-            { key: "event", header: "event", cell: (r) => <strong>{String(r.event)}</strong> },
-            { key: "detail", header: "detail", cell: (r) => <JsonView value={r.detail} /> },
-            { key: "time", header: "time", cell: (r) => <span title={formatDateTime(String(r.created_at))}>{timeAgo(String(r.created_at))}</span> },
-          ]}
-        />
-      )}
-    </>
-  );
-}
-
 // ---------------------------------------------------------------- config
 
 export function ConfigPage() {

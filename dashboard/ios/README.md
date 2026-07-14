@@ -6,7 +6,7 @@ A native iOS port of the `dashboard/web` admin console, sibling to the Expo/RN c
 bearer token**.
 
 Full parity with the web console: Overview, Workflows (+ detail / node graph), Agents,
-Messages, Memory, Users, Lifecycle, Config, Blobs, plus the Setup / Settings / auth gate.
+Messages, Memory, Users, Config, Blobs, plus the Setup / Settings / auth gate.
 
 ## Stack
 
@@ -36,7 +36,7 @@ dashboard/ios/
     Views/Components/  Card, StatusBadge, TypePill, DataTable, KeyValue, JsonView,
                        NodeTree, FilterPills, AgentPills, Pager, States, ScreenScroll
     Views/Screens/     Overview, Workflows, WorkflowDetail, Agents, Messages, Memory,
-                       Users, Lifecycle, Config, Blobs
+                       Users, Config, Blobs
     Resources/  Info.plist   Assets.xcassets (AppIcon, AccentColor)
 ```
 

@@ -40,7 +40,6 @@ any assertion fails; add `--build` to rebuild after editing the SQL.
 | `30_messages.sql` | users SELECT chat-wide (no writes); agents own-agent SELECT/INSERT/UPDATE; service ALL; dashboard read-all |
 | `40_memory.sql` | `memory` + `memory_sources`: primary own-agent; subconscious all agents; service ALL |
 | `50_config.sql` | users non-secret own; agents own incl. secrets; service non-secret only via `config_public`; dashboard read-all |
-| `60_lifecycle.sql` | users own SELECT; primary own SELECT+INSERT; subconscious INSERT-only; service SELECT-only; dashboard read-all |
 | `70_blobs.sql` | users full CRUD own; primary same via membership; subconscious denied; service ALL; dashboard read-all |
 | `80_users.sql` | users own-row; primary SELECT all + INSERT/UPDATE; subconscious SELECT all; service ALL; dashboard read-all |
 
@@ -55,9 +54,7 @@ A few cells are non-obvious least-privilege decisions worth calling out:
 | 1 | `messages` | anonymous/authenticated | **SELECT only** — the configured chat is one agent = one chat, so a user reads all of it; the agent role appends/edits on their behalf. Users never write. |
 | 2 | `attotools.blobs` | anonymous/authenticated | **full CRUD** on own agent — needed by the `WRITE_BLOB`/`READ_BLOB` tools (the user tier is primary's tool scope). |
 | 3 | `config` | service | **non-secret only**, via the `attobot.config_public` view — `service` is the subconscious's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
-| 4 | `lifecycle` | service | **SELECT only** — `service` tracks lifecycle but never appends (the agent roles do). |
-| 5 | `lifecycle` | agent_subconscious | **SELECT own + INSERT own** — it is a member of `service` (not `anonymous`/`authenticated`), and `service` is on the `lifecycle_agent_read_own` SELECT policy so `log_event`'s `INSERT ... RETURNING` can read the row back. |
-| 6 | `attotools.blobs` | agent_subconscious | **denied** — the blobs policy is `TO anonymous, authenticated`, and the subconscious is only a member of `service`. |
+| 4 | `attotools.blobs` | agent_subconscious | **denied** — the blobs policy is `TO anonymous, authenticated`, and the subconscious is only a member of `service`. |
 
 `attobot_dashboard` is `BYPASSRLS` with `SELECT`/`EXECUTE` only; it reads secret
 `config` rows but the dashboard API redacts them server-side.

@@ -22,8 +22,6 @@ BEGIN
   ELSE
     PERFORM attobot.set_config(p_agent_slug, 'telegram_thread_id', to_jsonb(p_thread_id));
   END IF;
-
-  PERFORM attobot.log_event(v_agent_id, 'telegram.configure', jsonb_build_object('chat_id', p_chat_id));
 END;
 $$;
 
@@ -139,10 +137,6 @@ BEGIN
   v_body := attobot._http_body_json(p_http_response);
 
   IF v_status < 200 OR v_status >= 300 OR coalesce((v_body->>'ok')::boolean, false) IS NOT TRUE THEN
-    PERFORM attobot.log_event(
-      v_agent_id, 'telegram.poll.error',
-      jsonb_build_object('status', v_status, 'body', v_body)
-    );
     RETURN jsonb_build_object('accepted', 0, 'ignored', 0, 'error', true);
   END IF;
 
@@ -203,11 +197,6 @@ BEGIN
     PERFORM attobot.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(v_max_update_id + 1));
   END IF;
 
-  PERFORM attobot.log_event(
-    v_agent_id, 'telegram.poll',
-    jsonb_build_object('accepted', v_accepted_count, 'ignored', v_ignored)
-  );
-
   RETURN jsonb_build_object('accepted', v_accepted_count, 'ignored', v_ignored, 'error', false);
 END;
 $$;
@@ -255,17 +244,16 @@ BEGIN
 END;
 $$;
 
--- Send one outbound message via Telegram and record the outcome in lifecycle.
--- Called inside a send instance (df.start from the outbound trigger). A text
--- reply is delivered upstream by df.http (sendMessage) in the send graph and
--- only logged here (p_http_response carries that result); an attachment is
--- uploaded here via curl (sendDocument) and then logged.
+-- Send one outbound message via Telegram. Called inside a send instance
+-- (df.start from the outbound trigger). A text reply is delivered upstream by
+-- df.http (sendMessage) in the send graph (p_http_response carries that
+-- result); an attachment is uploaded here via curl (sendDocument).
 --
 -- SELF-BINDS the agent GUC: the send instance runs in its own transaction,
 -- separate from the outbound trigger whose is_local bind does not survive into
--- here, so the agent-scoped reads (messages/config/blobs) and the lifecycle
--- write resolve under RLS. The slug is threaded in (rather than read from the
--- message) so the GUC can be bound before the agent-scoped message read.
+-- here, so the agent-scoped reads (messages/config/blobs) resolve under RLS.
+-- The slug is threaded in (rather than read from the message) so the GUC can be
+-- bound before the agent-scoped message read.
 CREATE OR REPLACE FUNCTION attobot.send_message(
   p_agent_slug text,
   p_message_id bigint,
@@ -296,12 +284,10 @@ DECLARE
 BEGIN
   PERFORM set_config('attobot.current_agent_id', v_agent_id::text, true);
 
-  -- Text reply: df.http already delivered it upstream; record the status only.
+  -- Text reply: df.http already delivered it upstream; return the parsed status.
   -- (p_http_response non-NULL is the text-path signal; attachments omit it.)
   IF p_http_response IS NOT NULL THEN
     v_status := attobot._http_status(p_http_response);
-    PERFORM attobot.log_event(v_agent_id, 'telegram.send',
-      jsonb_build_object('message_id', p_message_id, 'kind', 'text', 'status', v_status));
     RETURN jsonb_build_object('sent', v_status >= 200 AND v_status < 300, 'status', v_status);
   END IF;
 
@@ -314,7 +300,6 @@ BEGIN
 
   SELECT content INTO v_content FROM attotools.blobs WHERE agent_id = v_agent_id AND hash = v_blob_hash;
   IF v_content IS NULL THEN
-    PERFORM attobot.log_event(v_agent_id, 'telegram.send.error', jsonb_build_object('message_id', p_message_id, 'error', 'blob not found'));
     RETURN jsonb_build_object('sent', false, 'reason', 'blob not found');
   END IF;
 
@@ -354,8 +339,6 @@ BEGIN
   BEGIN IF v_oid IS NOT NULL THEN PERFORM lo_unlink(v_oid); END IF; EXCEPTION WHEN others THEN NULL; END;
   BEGIN PERFORM attobot._program_output('rm -f -- ' || attobot._shell_quote(v_path)); EXCEPTION WHEN others THEN NULL; END;
 
-  PERFORM attobot.log_event(v_agent_id, 'telegram.send',
-    jsonb_build_object('message_id', p_message_id, 'kind', 'attachment', 'status', v_status));
   RETURN jsonb_build_object('sent', v_status >= 200 AND v_status < 300, 'status', v_status);
 END;
 $$;
@@ -379,7 +362,7 @@ AS $$
 $$;
 
 -- Build the send-graph for an outbound message. Text → df.http sendMessage then
--- send_message (logs the status); attachment → send_message (curl + log). Used
+-- send_message (returns the status); attachment → send_message (curl upload). Used
 -- by the outbound trigger to df.start a send instance. SELF-BINDS the agent GUC
 -- for the build-time message read; send_message re-binds it at execution time,
 -- so no graph node depends on session state carried over from the trigger.
@@ -406,11 +389,11 @@ BEGIN
   v_blob_hash := v_msg.payload #>> '{attachment,blob_hash}';
 
   IF v_blob_hash IS NOT NULL THEN
-    -- attachment: send_message uploads via curl and logs (self-binds the GUC)
+    -- attachment: send_message uploads via curl (self-binds the GUC)
     RETURN format('SELECT attobot.send_message(%L, %s)::jsonb AS result', p_agent_slug, p_message_id);
   END IF;
 
-  -- text: df.http sends via sendMessage, then send_message logs the status.
+  -- text: df.http sends via sendMessage, then send_message parses the status.
   -- A tool-call turn with empty content is rendered to its tool name + params
   -- so the chat sees what the agent is doing instead of an empty message.
   v_tools := attobot._render_tool_calls(v_msg.payload->'tool_calls');

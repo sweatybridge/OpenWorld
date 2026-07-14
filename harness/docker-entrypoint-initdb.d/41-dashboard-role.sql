@@ -32,7 +32,7 @@ SELECT df.grant_usage('attobot_dashboard');
 GRANT USAGE ON SCHEMA attobot, attotools TO attobot_dashboard;
 GRANT SELECT
   ON attobot.agents, attobot.models, attobot.config, attobot.messages,
-     attobot.memory, attobot.memory_sources, attobot.lifecycle, attobot.users,
+     attobot.memory, attobot.memory_sources, attobot.users,
      attotools.blobs, attobot.instance_index
   TO attobot_dashboard;
 GRANT EXECUTE ON FUNCTION

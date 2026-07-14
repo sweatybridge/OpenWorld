@@ -90,14 +90,6 @@ CREATE TABLE IF NOT EXISTS attobot.memory_sources (
     REFERENCES attobot.messages(agent_id, id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS attobot.lifecycle (
-  id bigserial PRIMARY KEY,
-  agent_id bigint REFERENCES attobot.agents(id) ON DELETE CASCADE,
-  event text NOT NULL,
-  detail jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
 -- Channel-agnostic identity ledger. One row per (channel, external_id); today
 -- only 'telegram' is populated (by process_telegram_updates), but the shape
 -- supports future channels (discord, whatsapp) by new channel values.

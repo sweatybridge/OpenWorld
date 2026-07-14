@@ -14,7 +14,6 @@ const ITEMS: Array<{ name: keyof DrawerParamList; icon: string; label: string }>
   { name: "Messages", icon: "💬", label: "Messages" },
   { name: "Memory", icon: "🧠", label: "Memory" },
   { name: "Users", icon: "👥", label: "Users" },
-  { name: "Lifecycle", icon: "♻️", label: "Lifecycle" },
   { name: "Config", icon: "⚙️", label: "Config" },
   { name: "Blobs", icon: "📦", label: "Blobs" },
 ];
