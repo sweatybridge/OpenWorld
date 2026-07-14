@@ -85,25 +85,37 @@ export function DataTable<T>({ columns, rows, onRow }: {
 
 // ---------------------------------------------------------------- json view
 
+// Pretty-prints a value as JSON. pg results often arrive as a JSON string, so
+// parse those first and fall back to the raw text when it isn't valid JSON.
+function formatJson(value: unknown): string {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  if (value == null) return "null";
+  return JSON.stringify(value, null, 2);
+}
+
 export function JsonView({ value, defaultOpen = false }: { value: unknown; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
-  let text: string;
-  if (typeof value === "string") {
-    // Many pg results come back as a JSON string; pretty-print if it parses.
-    try {
-      text = JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-      text = value;
-    }
-  } else if (value == null) {
-    text = "null";
-  } else {
-    text = JSON.stringify(value, null, 2);
-  }
   return (
     <div className="json-view">
       <button className="link" onClick={() => setOpen((o) => !o)}>{open ? "▾ hide" : "▸ show"}</button>
-      {open && <pre>{text}</pre>}
+      {open && <pre>{formatJson(value)}</pre>}
+    </div>
+  );
+}
+
+// JSON rendered inline with no toggle — for spots that already provide their own
+// disclosure (e.g. a <details> around a node result), so the value expands the
+// moment that disclosure opens instead of behind a redundant nested show button.
+export function JsonText({ value }: { value: unknown }) {
+  return (
+    <div className="json-view">
+      <pre>{formatJson(value)}</pre>
     </div>
   );
 }
@@ -206,7 +218,7 @@ function NodeLine({ node }: { node: TreeNode }) {
       {node.result && (
         <details className="node-result">
           <summary>result</summary>
-          <JsonView value={node.result} defaultOpen={false} />
+          <JsonText value={node.result} />
         </details>
       )}
     </div>
