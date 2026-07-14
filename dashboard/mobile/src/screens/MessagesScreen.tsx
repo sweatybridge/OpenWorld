@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { apiGet, type MessageRow } from "../lib/api";
 import { useAgents } from "../hooks";
 import { timeAgo } from "../lib/format";
-import { AgentPills, EmptyState, ErrorState, JsonView, Scroll, Spinner } from "../components";
+import { AgentPills, EmptyState, ErrorState, JsonText, JsonView, Scroll, Spinner } from "../components";
 import { colors } from "../lib/theme";
 import type { AppDrawerScreenProps, AppNav } from "../nav/types";
 
@@ -95,6 +95,7 @@ function MessageStream({
 
 function MessageBubble({ m }: { m: MessageRow }) {
   const navigation = useNavigation<AppNav>();
+  const [payloadOpen, setPayloadOpen] = useState(false);
   const payload = m.payload as Record<string, unknown> | null;
   const toolCalls = Array.isArray(payload?.tool_calls)
     ? (payload!.tool_calls as Array<Record<string, unknown>>)
@@ -126,7 +127,12 @@ function MessageBubble({ m }: { m: MessageRow }) {
         </View>
       )}
       {payload && Object.keys(payload).length > 0 && toolCalls.length === 0 && (
-        <JsonView value={payload} />
+        <View>
+          <Pressable onPress={() => setPayloadOpen((o) => !o)} hitSlop={8}>
+            <Text style={s.toggle}>{payloadOpen ? "▾ payload" : "▸ payload"}</Text>
+          </Pressable>
+          {payloadOpen && <JsonText value={payload} />}
+        </View>
       )}
     </View>
   );
@@ -150,6 +156,7 @@ const s = StyleSheet.create({
   trace: { color: colors.accent, fontSize: 12 },
   metaTime: { color: colors.muted, fontSize: 12, marginLeft: "auto" },
   content: { color: colors.text, fontSize: 13 },
+  toggle: { color: colors.accent, fontSize: 13, paddingVertical: 2 },
   toolCalls: { gap: 6, marginTop: 6 },
   toolCall: { paddingLeft: 4 },
   toolName: { color: colors.accent, fontFamily: "monospace", fontSize: 12, marginBottom: 2 },
