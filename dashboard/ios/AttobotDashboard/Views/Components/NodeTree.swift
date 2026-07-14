@@ -132,7 +132,7 @@ private struct NodeLine: View {
                     }
                     .buttonStyle(.plain)
                     if openResult {
-                        JsonView(value: result, defaultOpen: false)
+                        JsonText(value: result)
                     }
                 }
                 .padding(.leading, CGFloat(depth) * 18 + 14)

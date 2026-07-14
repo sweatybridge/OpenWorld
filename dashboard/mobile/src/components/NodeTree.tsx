@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { InstanceNode } from "../lib/api";
 import { colors, statusColor } from "../lib/theme";
 import { truncate } from "../lib/format";
-import { JsonView } from "./JsonView";
+import { JsonText, JsonView } from "./JsonView";
 import { EmptyState } from "./States";
 
 const NODE_MARKER: Record<string, string> = {
@@ -73,7 +73,7 @@ function NodeRow({
               {openResult ? "▾ result" : "▸ result"}
             </Text>
           </Pressable>
-          {openResult && <JsonView value={node.result} defaultOpen={false} />}
+          {openResult && <JsonText value={node.result} />}
         </View>
       )}
       {left ? <NodeRow node={left} byId={byId} depth={depth + 1} /> : null}

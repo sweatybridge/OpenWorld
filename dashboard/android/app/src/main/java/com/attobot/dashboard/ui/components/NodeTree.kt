@@ -175,7 +175,7 @@ private fun NodeLine(node: InstanceNode) {
                     .padding(vertical = 2.dp),
             )
             if (openResult) {
-                JsonView(node.result, defaultOpen = false)
+                JsonText(node.result)
             }
         }
     }
