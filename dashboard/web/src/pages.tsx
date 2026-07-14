@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ConfigRow, type TraceRow } from "./api";
 import { messageIdFromLabel } from "./label";
 import {
-  Card, Column, DataTable, EmptyState, ErrorState, JsonView, NodeTree, Pager,
-  Spinner, StatusBadge, TypePill,
+  Card, Column, DataTable, EmptyState, ErrorState, JsonText, JsonView, NodeTree,
+  Pager, Spinner, StatusBadge, TypePill,
 } from "./components";
 import { formatBytes, formatDateTime, formatMs, timeAgo, truncate } from "./format";
 
@@ -460,7 +460,7 @@ function MessageBubble({ m }: { m: MessageRow }) {
         </ul>
       )}
       {payload && Object.keys(payload).length > 0 && toolCalls.length === 0 && (
-        <details className="node-result"><summary>payload</summary><JsonView value={payload} /></details>
+        <details className="node-result"><summary>payload</summary><JsonText value={payload} /></details>
       )}
     </div>
   );
