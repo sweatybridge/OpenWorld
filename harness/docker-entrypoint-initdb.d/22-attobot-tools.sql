@@ -324,11 +324,16 @@ DECLARE
   v_rows jsonb;
 BEGIN
   v_query := btrim(coalesce(p_query, ''));
+  -- Tolerate a single trailing semicolon (a common habit). Strip it, then
+  -- reject any remaining semicolon, which would signal a second statement.
+  IF right(v_query, 1) = ';' THEN
+    v_query := btrim(left(v_query, length(v_query) - 1));
+  END IF;
   IF v_query = '' THEN
     RAISE EXCEPTION 'SQL tool requires query';
   END IF;
   IF position(';' IN v_query) > 0 THEN
-    RAISE EXCEPTION 'SQL tool accepts one semicolon-free query';
+    RAISE EXCEPTION 'SQL tool accepts a single query';
   END IF;
 
   EXECUTE format(
@@ -343,7 +348,7 @@ BEGIN
   ));
 END;
 $$;
-COMMENT ON FUNCTION attotools._tool_sql(text) IS 'Run one semicolon-free SQL query inside PostgreSQL. The query must return rows. For writes, use a data-modifying CTE with RETURNING.';
+COMMENT ON FUNCTION attotools._tool_sql(text) IS 'Run one SQL query inside PostgreSQL. A single trailing semicolon is tolerated; multiple statements are rejected. The query must return rows. For writes, use a data-modifying CTE with RETURNING.';
 
 -- BASH: run a shell command on a remote host registered in ssh.hosts (the pg_ssh
 -- catalog). ssh.exec is SECURITY DEFINER, owned by the postgres superuser
