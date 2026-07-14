@@ -8,7 +8,7 @@ import type {
   NativeStackScreenProps,
 } from "@react-navigation/native-stack";
 
-// The 10 top-level screens (mirrors the web top-nav), each optionally carrying
+// The top-level screens (mirrors the web top-nav), each optionally carrying
 // a cross-link filter (e.g. Overview -> Workflows?status=failed).
 export type DrawerParamList = {
   Overview: undefined;
@@ -17,7 +17,6 @@ export type DrawerParamList = {
   Messages: { agentId?: string } | undefined;
   Memory: { agentId?: string } | undefined;
   Users: undefined;
-  Lifecycle: { agentId?: string } | undefined;
   Config: { agentId?: string } | undefined;
   Blobs: { agentId?: string } | undefined;
 };

@@ -6,7 +6,7 @@ the **same optional bearer token**. This is a sibling of the Expo/RN client in
 `dashboard/mobile/` — same screens, same data, same palette, native Android.
 
 Full parity with the web console: Overview, Workflows (+ detail / node graph),
-Agents, Messages, Memory, Users, Lifecycle, Config, Blobs.
+Agents, Messages, Memory, Users, Config, Blobs.
 
 ## Stack
 
@@ -51,7 +51,7 @@ dashboard/android/
       ui/components/  AttobotCard, StatusBadge/TypePill, DataTable, KeyValue, JsonView,
                       NodeTree, FilterPills/AgentPills, Pager, StateViews, PullRefreshScreen
       ui/screens/    Overview, Workflows, WorkflowDetail, Agents, Messages, Memory,
-                     Users, Lifecycle, Config, Blobs, Settings, Setup, Splash, BackendDown
+                     Users, Config, Blobs, Settings, Setup, Splash, BackendDown
 ```
 
 ## Prerequisites

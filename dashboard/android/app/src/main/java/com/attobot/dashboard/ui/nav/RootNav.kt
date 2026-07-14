@@ -49,7 +49,6 @@ import com.attobot.dashboard.ui.screens.AgentsScreen
 import com.attobot.dashboard.ui.screens.BackendDownScreen
 import com.attobot.dashboard.ui.screens.BlobsScreen
 import com.attobot.dashboard.ui.screens.ConfigScreen
-import com.attobot.dashboard.ui.screens.LifecycleScreen
 import com.attobot.dashboard.ui.screens.MemoryScreen
 import com.attobot.dashboard.ui.screens.MessagesScreen
 import com.attobot.dashboard.ui.screens.OverviewScreen
@@ -173,14 +172,6 @@ private fun AppRoot(gateVM: GateViewModel) {
                     MemoryScreen(navController, entry.arguments?.getString("agentId"))
                 }
                 composable(Routes.USERS) { UsersScreen(navController) }
-                composable(
-                    Routes.LIFECYCLE,
-                    arguments = listOf(
-                        navArgument("agentId") { type = NavType.StringType; nullable = true; defaultValue = null },
-                    ),
-                ) { entry ->
-                    LifecycleScreen(navController, entry.arguments?.getString("agentId"))
-                }
                 composable(
                     Routes.CONFIG,
                     arguments = listOf(
@@ -313,7 +304,6 @@ private fun titleForRoute(route: String?): String = when {
     route.startsWith("messages") -> "Messages"
     route.startsWith("memory") -> "Memory"
     route.startsWith("users") -> "Users"
-    route.startsWith("lifecycle") -> "Lifecycle"
     route.startsWith("config") -> "Config"
     route.startsWith("blobs") -> "Blobs"
     route.startsWith("workflow_detail") -> "Workflow"

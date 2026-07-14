@@ -62,12 +62,6 @@ interface AttobotApi {
     @GET("api/users")
     suspend fun users(): UsersResponse
 
-    @GET("api/lifecycle")
-    suspend fun lifecycle(
-        @Query("limit") limit: Int? = null,
-        @Query("agent_id") agentId: String? = null,
-    ): LifecycleResponse
-
     @GET("api/config")
     suspend fun config(@Query("agent_id") agentId: String? = null): ConfigResponse
 
@@ -197,9 +191,6 @@ object ApiProvider {
         req { memory(agentId?.ifBlank { null }) }.rows
 
     suspend fun users(): List<UserRow> = req { users() }.rows
-
-    suspend fun lifecycle(agentId: String? = null, limit: Int = 200): List<LifecycleRow> =
-        req { lifecycle(limit, agentId?.ifBlank { null }) }.rows
 
     suspend fun config(agentId: String? = null): List<ConfigRow> =
         req { config(agentId?.ifBlank { null }) }.rows

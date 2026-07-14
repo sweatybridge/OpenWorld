@@ -248,23 +248,6 @@ struct UserRow: Codable, Hashable {
     }
 }
 
-// MARK: - Lifecycle
-
-struct LifecycleRow: Codable, Hashable {
-    var id: Int64
-    var agentId: Int64?
-    var event: String?
-    var detail: JSONValue?
-    var createdAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case agentId = "agent_id"
-        case event, detail
-        case createdAt = "created_at"
-    }
-}
-
 // MARK: - Config
 
 struct ConfigRow: Codable, Hashable {

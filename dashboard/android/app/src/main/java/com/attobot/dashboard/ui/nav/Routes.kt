@@ -14,7 +14,6 @@ object Routes {
     const val MESSAGES = "messages?agentId={agentId}"
     const val MEMORY = "memory?agentId={agentId}"
     const val USERS = "users"
-    const val LIFECYCLE = "lifecycle?agentId={agentId}"
     const val CONFIG = "config?agentId={agentId}"
     const val BLOBS = "blobs?agentId={agentId}"
     const val WORKFLOW_DETAIL = "workflow_detail/{id}"
@@ -49,7 +48,6 @@ val DRAWER_ITEMS: List<DrawerItem> = listOf(
     DrawerItem("messages", "💬", "Messages"),
     DrawerItem("memory", "🧠", "Memory"),
     DrawerItem(Routes.USERS, "👥", "Users"),
-    DrawerItem("lifecycle", "♻️", "Lifecycle"),
     DrawerItem("config", "⚙️", "Config"),
     DrawerItem("blobs", "📗", "Blobs"),
 )

@@ -14,19 +14,6 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION attobot.log_event(
-  p_agent_id bigint,
-  p_event text,
-  p_detail jsonb DEFAULT '{}'::jsonb
-)
-RETURNS bigint
-LANGUAGE sql
-AS $$
-  INSERT INTO attobot.lifecycle(agent_id, event, detail)
-  VALUES (p_agent_id, p_event, p_detail)
-  RETURNING id;
-$$;
-
 CREATE OR REPLACE FUNCTION attobot.upsert_model(
   p_model text DEFAULT 'deepseek-v4-pro',
   p_api_base text DEFAULT 'https://api.deepseek.com/v1',
@@ -93,7 +80,6 @@ BEGIN
     PERFORM attobot.set_config(p_slug, 'api_key', to_jsonb(p_api_key), true);
   END IF;
 
-  PERFORM attobot.log_event(v_id, 'agent.ensure', jsonb_build_object('slug', p_slug));
   RETURN v_id;
 END;
 $$;
@@ -192,11 +178,6 @@ BEGIN
   VALUES (v_agent_id, p_role, coalesce(p_content, ''), coalesce(p_payload, '{}'::jsonb), p_channel, p_chat_id, p_tool_call_id)
   RETURNING id INTO v_id;
 
-  PERFORM attobot.log_event(
-    v_agent_id,
-    'message.append',
-    jsonb_build_object('message_id', v_id, 'role', p_role)
-  );
   RETURN v_id;
 END;
 $$;

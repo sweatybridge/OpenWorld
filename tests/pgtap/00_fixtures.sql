@@ -18,7 +18,7 @@
 -- agent/model ids stay 1/2. The message triggers are disabled in 00_setup.sql,
 -- so truncating messages fires no durable side effects. Runs as superuser.
 TRUNCATE attobot.memory_sources, attobot.memory, attobot.messages,
-         attobot.config, attobot.lifecycle, attobot.users,
+         attobot.config, attobot.users,
          attobot.agents, attobot.models, attotools.blobs
 RESTART IDENTITY CASCADE;
 

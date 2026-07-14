@@ -146,7 +146,7 @@ data class MessageRow(
     @SerialName("created_at") val createdAt: String,
 )
 
-// ---------------- Memory / Users / Lifecycle / Config / Blobs ----------------
+// ---------------- Memory / Users / Config / Blobs ----------------
 
 @Serializable
 data class MemoryRow(
@@ -171,15 +171,6 @@ data class UserRow(
     val payload: JsonElement? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("updated_at") val updatedAt: String? = null,
-)
-
-@Serializable
-data class LifecycleRow(
-    val id: Long,
-    @SerialName("agent_id") val agentId: Long? = null,
-    val event: String? = null,
-    val detail: JsonElement? = null,
-    @SerialName("created_at") val createdAt: String? = null,
 )
 
 @Serializable
@@ -212,9 +203,6 @@ data class MemoryResponse(val rows: List<MemoryRow> = emptyList())
 
 @Serializable
 data class UsersResponse(val rows: List<UserRow> = emptyList())
-
-@Serializable
-data class LifecycleResponse(val rows: List<LifecycleRow> = emptyList())
 
 @Serializable
 data class ConfigResponse(val rows: List<ConfigRow> = emptyList())

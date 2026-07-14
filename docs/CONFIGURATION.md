@@ -173,7 +173,7 @@ VALUES (attobot.agent_id('primary'), 'user', 'Introduce yourself');
 ```
 
 The reply lands back in `attobot.messages`. Turn progress is visible in
-`attobot.lifecycle` and `df.instances`.
+`df.instances`.
 
 To start a cron-driven loop for the subconscious agent:
 

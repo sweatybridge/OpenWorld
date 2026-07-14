@@ -20,7 +20,6 @@ struct MenuView: View {
         Item(route: .messages(), icon: "💬", label: "Messages"),
         Item(route: .memory(), icon: "🧠", label: "Memory"),
         Item(route: .users, icon: "👥", label: "Users"),
-        Item(route: .lifecycle(), icon: "♻️", label: "Lifecycle"),
         Item(route: .config(), icon: "⚙️", label: "Config"),
         Item(route: .blobs(), icon: "📗", label: "Blobs"),
     ]

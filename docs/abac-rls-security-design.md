@@ -118,7 +118,7 @@ NULL when unset → `NULL = x` → NULL → **deny**):
 
 | GUC | Set by | Read by RLS policies for |
 |---|---|---|
-| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoping of `messages`, `memory`, `memory_sources`, `config`, `lifecycle`, `blobs` |
+| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoping of `messages`, `memory`, `memory_sources`, `config`, `blobs` |
 | `attobot.current_chat_id` | tool bootstrap | `messages` chat-wide SELECT (the configured chat) |
 | `attobot.current_user_id` | tool bootstrap | `users` own-row SELECT |
 | `attobot.current_role`, `attobot.current_channel`, `attobot.current_telegram_user_id` | `set_context` | carried for the loop/tool; no RLS policy reads them today |
@@ -169,7 +169,6 @@ approximation; per-message turns are a later refinement.)
 | `memory` | — | — | ALL own agent | ALL across agents | ALL |
 | `memory_sources` | — | — | ALL own agent | ALL across agents | ALL |
 | `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
-| `lifecycle` | SELECT own | SELECT own | SELECT own; INSERT own | SELECT own; INSERT own | SELECT only |
 | `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
@@ -242,7 +241,6 @@ All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `attobot_service` is
 - **config** — agent roles `SELECT`/`INSERT`/`UPDATE` their **own rows incl. secrets**; tiers `SELECT` non-secret own only; `attobot_service` has no grant on the base table and reads non-secret rows only via the `config_public` view (secret-free LLM-SQL scope).
 - **memory / memory_sources / blobs** — agent-scoped by `current_agent_id`; `agent_primary` full-CRUDs its own; `agent_subconscious` full-CRUDs every agent's memory/memory_sources; tiers full-CRUD their own blobs (subconscious gets none).
 - **agents / models** — PUBLIC read; service/superuser writes.
-- **lifecycle** — tiers and `agent_primary` SELECT own; agents INSERT own; `agent_subconscious` also SELECTs its own (via the `service`-granted policy, so `log_event`'s `INSERT ... RETURNING` can read the row back); service is SELECT-only.
 
 ---
 

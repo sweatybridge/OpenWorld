@@ -77,8 +77,8 @@ GRANT USAGE ON SCHEMA attobot, attotools
 --   role only — a role with no INSERT on a table gets no USAGE on its seq.
 -- ============================================================================
 
--- Agent roles append to users, messages, and memory during its lifecycle
-GRANT USAGE ON SEQUENCE attobot.messages_id_seq, attobot.memory_id_seq, attobot.lifecycle_id_seq, attobot.users_id_seq
+-- Agent roles append to users, messages, and memory as they run
+GRANT USAGE ON SEQUENCE attobot.messages_id_seq, attobot.memory_id_seq, attobot.users_id_seq
   TO attobot_agent_primary, attobot_agent_subconscious;
 -- Service role can add new models, agents, memory, or users through SQL tool 
 GRANT USAGE ON SEQUENCE attobot.agents_id_seq, attobot.models_id_seq, attobot.memory_id_seq, attobot.users_id_seq
@@ -244,33 +244,6 @@ CREATE POLICY config_user_read_nonsecret ON attobot.config
     agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint
     AND secret = false
   );
-
--- ============================================================================
--- TABLE: attobot.lifecycle   (audit log — internal; agents append+read, service tracks)
--- ============================================================================
-
-GRANT SELECT ON attobot.lifecycle
-  TO attobot_anonymous, attobot_authenticated, attobot_service;
-GRANT SELECT, INSERT ON attobot.lifecycle
-  TO attobot_agent_primary, attobot_agent_subconscious;
-
-ALTER TABLE attobot.lifecycle ENABLE ROW LEVEL SECURITY;
-
--- attobot_agent_subconscious is NOT a member of anonymous/authenticated (it is
--- a member of attobot_service), so lifecycle_agent_read_own does not apply to
--- it. Without a SELECT policy, log_event's INSERT ... RETURNING id fails for the
--- subconscious cron loop (RETURNING reads the row back under a SELECT policy).
--- Grant service (and thus the subconscious member) SELECT on its own rows.
--- attobot_service itself is BYPASSRLS, so this only binds the subconscious.
-DROP POLICY IF EXISTS lifecycle_agent_read_own ON attobot.lifecycle;
-CREATE POLICY lifecycle_agent_read_own ON attobot.lifecycle
-  FOR SELECT TO attobot_anonymous, attobot_authenticated, attobot_service
-  USING (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
-
-DROP POLICY IF EXISTS lifecycle_agent_insert_own ON attobot.lifecycle;
-CREATE POLICY lifecycle_agent_insert_own ON attobot.lifecycle
-  FOR INSERT TO attobot_agent_primary, attobot_agent_subconscious
-  WITH CHECK (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
 
 -- ============================================================================
 -- TABLE: attotools.blobs   (agent-scoped content store)

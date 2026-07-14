@@ -53,7 +53,7 @@ SELECT ok( has_schema_privilege('attobot_service','attotools','USAGE'),         
 SELECT ok( has_schema_privilege('attobot_dashboard','attotools','USAGE'),       'dashboard has USAGE on attotools');
 
 -- ----- sequence USAGE (only the roles that INSERT) ---------------------------
--- messages/memory/lifecycle/users seqs -> agent roles; agents/models/memory/users -> service.
+-- messages/memory/users seqs -> agent roles; agents/models/memory/users -> service.
 SELECT ok( has_sequence_privilege('attobot_agent_primary','attobot.messages_id_seq','USAGE'),      'primary has USAGE on messages_id_seq');
 SELECT ok( has_sequence_privilege('attobot_agent_subconscious','attobot.messages_id_seq','USAGE'),'subconscious has USAGE on messages_id_seq');
 SELECT ok( has_sequence_privilege('attobot_agent_primary','attobot.users_id_seq','USAGE'),        'primary has USAGE on users_id_seq');
