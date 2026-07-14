@@ -20,7 +20,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,6 +42,7 @@ import com.attobot.dashboard.state.UiState
 import com.attobot.dashboard.ui.components.AgentPills
 import com.attobot.dashboard.ui.components.EmptyState
 import com.attobot.dashboard.ui.components.ErrorState
+import com.attobot.dashboard.ui.components.JsonText
 import com.attobot.dashboard.ui.components.JsonView
 import com.attobot.dashboard.ui.components.LoadingView
 import com.attobot.dashboard.ui.components.PullRefreshScreen
@@ -138,6 +142,7 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
         }
     }
     val borderColor = ROLE_BORDER[m.role] ?: border
+    var payloadOpen by rememberSaveable { mutableStateOf(false) }
 
     Surface(
         color = panel,
@@ -204,7 +209,19 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
                         }
                     }
                 } else if (payload is JsonObject && payload.keys.isNotEmpty()) {
-                    JsonView(payload)
+                    Column {
+                        Text(
+                            if (payloadOpen) "▾ payload" else "▸ payload",
+                            color = accent,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .clickable { payloadOpen = !payloadOpen }
+                                .padding(vertical = 2.dp),
+                        )
+                        if (payloadOpen) {
+                            JsonText(payload)
+                        }
+                    }
                 }
             }
         }

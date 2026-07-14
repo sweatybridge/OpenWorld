@@ -82,6 +82,7 @@ struct MessagesScreen: View {
 
 private struct MessageBubble: View {
     let message: MessageRow
+    @State private var payloadOpen = false
 
     private static let roleBorder: [String: Color] = [
         "tool": Theme.pend,
@@ -139,7 +140,21 @@ private struct MessageBubble: View {
                 }
                 .padding(.top, 6)
             } else if hasOtherPayload(payload) {
-                JsonView(value: payload)
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        payloadOpen.toggle()
+                    } label: {
+                        Text(payloadOpen ? "▾ payload" : "▸ payload")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.vertical, 2)
+                    }
+                    .buttonStyle(.plain)
+                    if payloadOpen {
+                        JsonText(value: payload)
+                    }
+                }
+                .padding(.top, 6)
             }
         }
         .padding(10)
