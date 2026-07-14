@@ -739,7 +739,6 @@ DECLARE
   v_tcid text;
   v_status text;
   v_result text;
-  v_deadline timestamptz;
   v_count integer := 0;
 BEGIN
   FOR v_item IN SELECT value FROM jsonb_array_elements(
@@ -749,26 +748,37 @@ BEGIN
     v_count := v_count + 1;
     v_id := v_item->>'id';
     v_tcid := v_item->>'tc_id';
-    v_deadline := clock_timestamp() + make_interval(secs => p_timeout);
-    v_status := NULL;
-    LOOP
+
+    -- Block in C until the tool instance terminates or p_timeout elapses.
+    -- wait_for_completion returns the terminal status ('completed'/'failed'/
+    -- 'cancelled') directly. It RAISES on: inside-workflow, timeout<=0,
+    -- instance-not-found, or timeout-exceeded-without-a-terminal-state — and
+    -- only that last case leaves the tool still running, so only it needs
+    -- cancelling (the others are not cancellable or misuse). The tool instances
+    -- are already df.started in parallel by start_tool_calls, so awaiting them
+    -- in order still resolves in ~max(duration).
+    BEGIN
+      SELECT df.wait_for_completion(v_id, p_timeout) INTO v_status;
+    EXCEPTION WHEN OTHERS THEN
+      -- Raised: single out the timeout case. df.status still running/pending ⇒
+      -- the wait timed out with the instance alive ⇒ cancel; df.status raising
+      -- ⇒ not-found (nothing to cancel) ⇒ 'error'.
       BEGIN
         SELECT df.status(v_id) INTO v_status;
       EXCEPTION WHEN OTHERS THEN
-        v_status := 'error';
+        v_status := NULL;
       END;
-      EXIT WHEN v_status IN ('completed', 'failed', 'cancelled', 'error');
-      IF clock_timestamp() >= v_deadline THEN
+      IF v_status IN ('running', 'pending') THEN
         BEGIN
           PERFORM df.cancel(v_id, 'tool call timeout');
         EXCEPTION WHEN OTHERS THEN
           NULL;
         END;
         v_status := 'cancelled';
-        EXIT;
+      ELSE
+        v_status := 'error';
       END IF;
-      PERFORM pg_sleep(0.5);
-    END LOOP;
+    END;
 
     BEGIN
       SELECT df.result(v_id) INTO v_result;
