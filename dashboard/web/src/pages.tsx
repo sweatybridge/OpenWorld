@@ -185,7 +185,6 @@ export function WorkflowsPage() {
     { key: "type", header: "type", cell: (r) => <TypePill type={r.type} /> },
     { key: "agent", header: "agent", cell: (r) => r.agent ?? "—" },
     { key: "status", header: "status", cell: (r) => <StatusBadge status={r.status} /> },
-    { key: "by", header: "submitted by", cell: (r) => <code>{r.submitted_by}</code> },
     { key: "updated", header: "updated", cell: (r) => <span title={formatDateTime(r.updated_at)}>{timeAgo(r.updated_at)}</span> },
   ];
 

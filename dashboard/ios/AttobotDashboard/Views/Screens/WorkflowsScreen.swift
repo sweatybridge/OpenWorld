@@ -74,9 +74,6 @@ struct WorkflowsScreen: View {
                             Text(r.agent ?? "—").font(.system(size: 13)).foregroundStyle(Theme.text)
                         },
                         DataTableColumn<WorkflowRow>(id: "status", title: "status") { r in StatusBadge(r.status) },
-                        DataTableColumn<WorkflowRow>(id: "by", title: "submitted by", width: 110) { r in
-                            Text(r.submittedBy).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1)
-                        },
                         DataTableColumn<WorkflowRow>(id: "updated", title: "updated") { r in
                             Text(Format.timeAgo(r.updatedAt)).font(.system(size: 13)).foregroundStyle(Theme.text)
                         },

@@ -120,9 +120,6 @@ private fun workflowColumns(): List<TableColumn<WorkflowRow>> = listOf(
     TableColumn(header = "status", width = 110.dp) {
         StatusBadge(it.status)
     },
-    TableColumn(header = "submitted by", width = 110.dp) {
-        Text(it.submittedBy, color = text, fontFamily = FontFamily.Monospace, fontSize = 12.sp, maxLines = 1)
-    },
     TableColumn(header = "updated", width = 90.dp) {
         Text(timeAgo(it.updatedAt), color = text, fontSize = 13.sp)
     },

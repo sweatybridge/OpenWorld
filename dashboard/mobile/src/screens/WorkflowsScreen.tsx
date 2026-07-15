@@ -133,16 +133,6 @@ export function WorkflowsScreen({ navigation, route }: Props) {
               cell: (r) => <StatusBadge status={r.status} />,
             },
             {
-              key: "by",
-              header: "submitted by",
-              width: 110,
-              cell: (r) => (
-                <Text style={s.mono} numberOfLines={1}>
-                  {r.submitted_by}
-                </Text>
-              ),
-            },
-            {
               key: "updated",
               header: "updated",
               cell: (r) => <Text style={s.cell}>{timeAgo(r.updated_at)}</Text>,
