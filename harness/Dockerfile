@@ -38,6 +38,16 @@ RUN set -eux; \
     # against execution_acquire_timeout (30s) — a 1ms tool call sat 46s. Raise
     # it so executors have headroom alongside the management workload.
     echo "max_worker_processes = 32" >> /usr/share/postgresql/postgresql.conf.sample; \
+    # Orchestration runs over its own connection pools, separate from
+    # max_worker_processes. The defaults (max_duroxide_connections=10,
+    # max_management_connections=6) saturate once several agent loops run
+    # concurrently — await_tool_calls' wait_for_completion holds pool capacity
+    # for up to 120s, so tool activities queue, miss their 120s tool-call
+    # timeout, and the instance is cancelled before the real work (e.g. an
+    # execute-http) ever runs. Raise both to give executors headroom under
+    # concurrent primary/subcons loops.
+    echo "pg_durable.max_duroxide_connections = 32" >> /usr/share/postgresql/postgresql.conf.sample; \
+    echo "pg_durable.max_management_connections = 12" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.database = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.worker_role = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample
 
