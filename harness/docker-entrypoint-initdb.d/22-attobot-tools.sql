@@ -359,27 +359,53 @@ COMMENT ON FUNCTION attotools._tool_sql(text) IS 'Run one SQL query inside Postg
 -- roles may run remote commands. ssh.exec returns stdout/stderr as bytea
 -- (binary-safe); we decode them as UTF-8 here since BASH output is text. On
 -- connection/auth failure ssh.exec raises, which run_tool_call_as_role turns
--- into an 'error: ...' result.
+-- into an 'error: ...' result. The host arg is optional: when omitted, BASH
+-- targets the first entry in ssh.hosts (see _default_ssh_host).
+
+-- Default SSH host = first entry in ssh.hosts. SECURITY DEFINER (owned by the
+-- bootstrap superuser) because ssh.hosts is superuser-only — it stores private
+-- keys — so the acting role that runs _tool_bash can't read it directly; we
+-- expose only host_name, a non-sensitive operator-assigned label. ssh.hosts has
+-- no insertion-order column, so "first" is host_name-ascending (deterministic);
+-- in the usual single-host deployment there is only one row. Returns NULL when
+-- no host is registered, in which case _tool_bash raises.
+CREATE OR REPLACE FUNCTION attotools._default_ssh_host()
+RETURNS text
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = pg_catalog
+AS $$
+  SELECT host_name FROM ssh.hosts ORDER BY host_name LIMIT 1;
+$$;
+
 CREATE OR REPLACE FUNCTION attotools._tool_bash(
-  p_host text,
-  p_command text
+  p_command text,
+  p_host text DEFAULT ''
 )
 RETURNS text
 LANGUAGE plpgsql
 SET search_path = attobot, attotools, public, pg_temp
 AS $$
 DECLARE
-  v_host text := btrim(coalesce(p_host, ''));
   v_command text := coalesce(p_command, '');
+  v_host text := btrim(coalesce(p_host, ''));
   v_stdout text;
   v_stderr text;
   v_exit integer;
 BEGIN
-  IF v_host = '' THEN
-    RAISE EXCEPTION 'BASH requires host';
-  END IF;
   IF v_command = '' THEN
     RAISE EXCEPTION 'BASH requires command';
+  END IF;
+
+  -- No host specified: use the first entry in ssh.hosts (resolved superuser-side
+  -- by _default_ssh_host; ssh.hosts itself is unreadable by the acting role).
+  IF v_host = '' THEN
+    v_host := attotools._default_ssh_host();
+    IF v_host IS NULL THEN
+      RAISE EXCEPTION 'BASH requires host (no SSH hosts registered in ssh.hosts)';
+    END IF;
+    v_host := btrim(v_host);
   END IF;
 
   -- ssh.exec returns TABLE(stdout bytea, stderr bytea, exit_code int); decode
@@ -396,7 +422,7 @@ BEGIN
   )::text;
 END;
 $$;
-COMMENT ON FUNCTION attotools._tool_bash(text, text) IS 'Run a shell command on a remote host over SSH and return stdout, stderr, and exit_code. The host must already be registered in ssh.hosts.';
+COMMENT ON FUNCTION attotools._tool_bash(text, text) IS 'Run a shell command on a remote host over SSH and return stdout, stderr, and exit_code. host is optional and defaults to the first entry in ssh.hosts when omitted; the host must already be registered in ssh.hosts.';
 
 -- Build the result text of a WEBFETCH from its http response (no append).
 CREATE OR REPLACE FUNCTION attotools._webfetch_result(
@@ -590,8 +616,8 @@ BEGIN
     v_result := CASE p_name
       WHEN 'SQL' THEN attotools._tool_sql(coalesce(p_args->>'query', ''))
       WHEN 'BASH' THEN attotools._tool_bash(
-            coalesce(p_args->>'host', ''),
-            coalesce(p_args->>'command', ''))
+            coalesce(p_args->>'command', ''),
+            coalesce(p_args->>'host', ''))
       WHEN 'SEND_ATTACHMENT' THEN attotools._tool_send_attachment(
             coalesce(p_args->>'hash', ''),
             coalesce(p_args->>'filename', ''),

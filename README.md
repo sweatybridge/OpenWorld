@@ -92,7 +92,7 @@ The LLM sees these database-native tools (schemas are introsducted from the
 
 - `SEARCH`: search the public web and return titles, URLs, and snippets.
 - `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, and a truncated text body.
-- `BASH`: run a shell command on a registered remote host over SSH.
+- `BASH`: run a shell command on a registered remote host over SSH. `host` is optional and defaults to the first registered host when omitted.
 - `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
 - `WRITE_BLOB`: store large or binary content in `attotools.blobs`.
 - `READ_BLOB`: read blob content by hash in a chosen text encoding.
