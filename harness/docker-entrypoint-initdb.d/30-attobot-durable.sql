@@ -223,7 +223,7 @@ BEGIN
   v_future := df.loop(
     format('SELECT attobot.telegram_get_updates_body(%L, %s)::text AS body', p_agent_slug, p_timeout) |=> 'req'
     ~> df.http(attobot._telegram_api_url(p_agent_slug, 'getUpdates'), 'POST', '$req',
-               attobot._telegram_headers(), p_timeout + 10) |=> 'resp'
+               attobot._telegram_headers(), p_timeout + 5) |=> 'resp'
     ~> format('SELECT attobot.poll_messages(%L, $resp::jsonb)::jsonb AS result', p_agent_slug)
   );
 

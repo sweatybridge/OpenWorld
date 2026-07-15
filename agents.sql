@@ -68,7 +68,7 @@ WHERE NULLIF(:'exa_api_key', '') IS NOT NULL;
 SELECT attobot.ensure_agent_cron_loop(
   p_agent_slug => 'subconscious',
   p_name => 'primary-review',
-  p_cron => '*/10 * * * *',
+  p_cron => '*/30 * * * *',
   p_message => 'review agent streams for actionable memory corrections'
 );
 
