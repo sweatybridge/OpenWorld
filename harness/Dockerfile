@@ -32,6 +32,12 @@ RUN set -eux; \
 
 RUN set -eux; \
     echo "shared_preload_libraries = 'pg_durable'" >> /usr/share/postgresql/postgresql.conf.sample; \
+    # df's background workers (management + SQL-node executors) all draw from
+    # max_worker_processes. With only the default 8, a loop blocked in
+    # wait_for_completion (up to 120s) starves the pool and tool nodes queue
+    # against execution_acquire_timeout (30s) — a 1ms tool call sat 46s. Raise
+    # it so executors have headroom alongside the management workload.
+    echo "max_worker_processes = 32" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.database = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.worker_role = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample
 
