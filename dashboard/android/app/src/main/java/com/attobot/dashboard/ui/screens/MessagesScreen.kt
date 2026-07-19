@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -143,6 +144,16 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
     }
     val borderColor = ROLE_BORDER[m.role] ?: border
     var payloadOpen by rememberSaveable { mutableStateOf(false) }
+    // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
+    // chain-of-thought in `reasoning_content` and leave `content` empty. The raw
+    // LLM message — reasoning_content included — is stored verbatim at
+    // payload.raw, so fall back to it when the visible reply is blank instead of
+    // showing an empty bubble.
+    val reasoning = run {
+        val raw = (payload as? JsonObject)?.get("raw") as? JsonObject ?: return@run ""
+        val rc = raw["reasoning_content"]
+        if (rc is JsonPrimitive && rc.isString) rc.content else ""
+    }
 
     Surface(
         color = panel,
@@ -191,6 +202,24 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
                         fontSize = 13.sp,
                         modifier = Modifier.padding(top = 4.dp),
                     )
+                } else if (reasoning.isNotEmpty()) {
+                    Column(
+                        Modifier.padding(top = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            "REASONING",
+                            color = accent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            reasoning,
+                            color = muted,
+                            fontSize = 13.sp,
+                            fontStyle = FontStyle.Italic,
+                        )
+                    }
                 }
 
                 if (toolCalls.isNotEmpty()) {
