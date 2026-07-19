@@ -441,12 +441,11 @@ function MessageBubble({ m }: { m: MessageRow }) {
   const payload = m.payload as Record<string, unknown> | null;
   const toolCalls = Array.isArray(payload?.tool_calls) ? (payload!.tool_calls as Array<Record<string, unknown>>) : [];
   // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
-  // chain-of-thought in `reasoning_content` and leave `content` empty. The raw
-  // LLM message — reasoning_content included — is stored verbatim at payload.raw,
-  // so fall back to it when the visible reply is blank instead of showing an
-  // empty bubble.
-  const raw = (payload?.raw ?? undefined) as Record<string, unknown> | undefined;
-  const reasoning = typeof raw?.reasoning_content === "string" ? raw.reasoning_content : "";
+  // chain-of-thought in `reasoning_content` and leave `content` empty.
+  // record_assistant flattens the raw LLM message straight into the payload, so
+  // reasoning_content lives at the top level — fall back to it when the visible
+  // reply is blank instead of showing an empty bubble.
+  const reasoning = typeof payload?.reasoning_content === "string" ? payload.reasoning_content : "";
   return (
     <div className={`msg msg-${m.role}`}>
       <div className="msg-meta">
@@ -472,7 +471,7 @@ function MessageBubble({ m }: { m: MessageRow }) {
           ))}
         </ul>
       )}
-      {payload && Object.keys(payload).length > 0 && toolCalls.length === 0 && (
+      {payload && Object.keys(payload).length > 0 && (
         <details className="node-result"><summary>payload</summary><JsonText value={payload} /></details>
       )}
     </div>

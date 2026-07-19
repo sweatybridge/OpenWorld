@@ -304,9 +304,13 @@ BEGIN
     ELSE '[]'::jsonb
   END;
 
-  v_payload := jsonb_build_object('raw', v_message, 'tool_calls', v_tool_calls)
-    -- Stamp the requesting user so tool calls can run with that user's scope.
-    || jsonb_build_object('requesting_user_id', p_requesting_user_id);
+  -- Flatten the raw LLM message (content/reasoning_content/tool_calls/…) straight
+  -- into the payload rather than nesting it under a `raw` key, so consumers can
+  -- read e.g. reasoning_content without descending into payload.raw. tool_calls
+  -- is re-stamped so the key is always present as an array even when the model
+  -- emitted none; requesting_user_id scopes any tool calls to that user.
+  v_payload := v_message
+    || jsonb_build_object('tool_calls', v_tool_calls, 'requesting_user_id', p_requesting_user_id);
 
   -- Only mark a turn for delivery when it is a final reply: an assistant turn
   -- that carries tool calls is an intermediate step (often with empty text), so
