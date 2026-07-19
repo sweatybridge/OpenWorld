@@ -212,7 +212,7 @@ export async function listAgentMessages(
 }
 
 // ---------------------------------------------------------------------------
-// Memory / users / config / blobs
+// Memory / users / config
 // ---------------------------------------------------------------------------
 
 export async function listMemory(agentId: number | null) {
@@ -243,17 +243,6 @@ export async function listConfig(agentId: number | null): Promise<ConfigRow[]> {
      FROM attobot.config
      WHERE ($1::bigint IS NULL OR agent_id = $1)
      ORDER BY agent_id, key`,
-    [agentId]
-  );
-  return rows;
-}
-
-export async function listBlobs(agentId: number | null) {
-  const { rows } = await query(
-    `SELECT agent_id, hash, octet_length(content) AS size, created_at
-     FROM attotools.blobs
-     WHERE ($1::bigint IS NULL OR agent_id = $1)
-     ORDER BY created_at DESC LIMIT 500`,
     [agentId]
   );
   return rows;

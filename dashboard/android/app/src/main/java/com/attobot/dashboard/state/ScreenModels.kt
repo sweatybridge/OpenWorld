@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.attobot.dashboard.core.AgentRow
 import com.attobot.dashboard.core.ApiProvider
 import com.attobot.dashboard.core.AuthException
-import com.attobot.dashboard.core.BlobRow
 import com.attobot.dashboard.core.ConfigRow
 import com.attobot.dashboard.core.MemoryRow
 import com.attobot.dashboard.core.Overview
@@ -239,10 +238,6 @@ class MemoryViewModel : AgentFilteredViewModel<List<MemoryRow>>(poll = false) {
 
 class ConfigViewModel : AgentFilteredViewModel<List<ConfigRow>>(poll = false) {
     override suspend fun fetch(): List<ConfigRow> = ApiProvider.config(agentIdOrAll())
-}
-
-class BlobsViewModel : AgentFilteredViewModel<List<BlobRow>>(poll = false) {
-    override suspend fun fetch(): List<BlobRow> = ApiProvider.blobs(agentIdOrAll())
 }
 
 class UsersViewModel : PollingViewModel<List<UserRow>>(poll = false) {

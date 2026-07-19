@@ -33,7 +33,7 @@ GRANT USAGE ON SCHEMA attobot, attotools TO attobot_dashboard;
 GRANT SELECT
   ON attobot.agents, attobot.models, attobot.config, attobot.messages,
      attobot.memory, attobot.memory_sources, attobot.users,
-     attotools.blobs, attobot.instance_index
+     attobot.instance_index
   TO attobot_dashboard;
 GRANT EXECUTE ON FUNCTION
   attobot.trace_turn(bigint),

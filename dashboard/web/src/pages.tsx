@@ -7,7 +7,7 @@ import {
   Card, Column, DataTable, EmptyState, ErrorState, JsonText, JsonView, NodeTree,
   Pager, Spinner, StatusBadge, TypePill,
 } from "./components";
-import { formatBytes, formatDateTime, formatMs, timeAgo, truncate } from "./format";
+import { formatDateTime, formatMs, timeAgo, truncate } from "./format";
 
 const REFRESH_MS = 5000;
 
@@ -555,39 +555,6 @@ export function ConfigPage() {
             { key: "value", header: "value", cell: (r) => r.secret ? <span className="redacted">•••••• (secret)</span> : <JsonView value={r.value} /> },
             { key: "secret", header: "secret", cell: (r) => (r.secret ? "yes" : "no") },
             { key: "updated", header: "updated", cell: (r) => <span title={formatDateTime(r.updated_at)}>{timeAgo(r.updated_at)}</span> },
-          ]}
-        />
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------- blobs
-
-export function BlobsPage() {
-  const [params, setParams] = useSearchParams();
-  const agentId = params.get("agent_id") ?? "";
-  const query = useQuery({
-    queryKey: ["blobs", agentId],
-    queryFn: () => apiGet<{ rows: Array<Record<string, unknown>> }>(
-      `/api/blobs` + (agentId ? `?agent_id=${agentId}` : "")
-    ),
-  });
-  const rows = query.data?.rows ?? [];
-  return (
-    <>
-      <h1>Blobs</h1>
-      <div className="filters">
-        <AgentSelect value={agentId} onChange={(v) => { const n = new URLSearchParams(params); v ? n.set("agent_id", v) : n.delete("agent_id"); setParams(n); }} />
-      </div>
-      {query.error ? <ErrorState message={(query.error as Error).message} /> : query.isLoading ? <Spinner /> : (
-        <DataTable
-          rows={rows}
-          columns={[
-            { key: "agent", header: "agent", cell: (r) => String(r.agent_id) },
-            { key: "hash", header: "hash", cell: (r) => <code>{truncate(String(r.hash), 24)}</code> },
-            { key: "size", header: "size", cell: (r) => formatBytes(r.size == null ? null : Number(r.size)) },
-            { key: "created", header: "created", cell: (r) => <span title={formatDateTime(String(r.created_at))}>{timeAgo(String(r.created_at))}</span> },
           ]}
         />
       )}

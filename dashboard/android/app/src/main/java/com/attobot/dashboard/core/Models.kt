@@ -146,7 +146,7 @@ data class MessageRow(
     @SerialName("created_at") val createdAt: String,
 )
 
-// ---------------- Memory / Users / Config / Blobs ----------------
+// ---------------- Memory / Users / Config ----------------
 
 @Serializable
 data class MemoryRow(
@@ -182,14 +182,6 @@ data class ConfigRow(
     @SerialName("updated_at") val updatedAt: String? = null,
 )
 
-@Serializable
-data class BlobRow(
-    @SerialName("agent_id") val agentId: Long? = null,
-    val hash: String? = null,
-    val size: Long? = null,
-    @SerialName("created_at") val createdAt: String? = null,
-)
-
 // ---------------- Response wrappers ----------------
 
 @Serializable
@@ -206,9 +198,6 @@ data class UsersResponse(val rows: List<UserRow> = emptyList())
 
 @Serializable
 data class ConfigResponse(val rows: List<ConfigRow> = emptyList())
-
-@Serializable
-data class BlobsResponse(val rows: List<BlobRow> = emptyList())
 
 // ---------------- Arbitrary-JSON helpers ----------------
 

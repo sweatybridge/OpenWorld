@@ -1,16 +1,3 @@
--- Agent-scoped, content-addressed blob store. Large/binary content is kept out
--- of the message stream and referenced by hash. EXTERNAL storage so bytea is
--- neither compressed nor inlined.
-CREATE TABLE IF NOT EXISTS attotools.blobs (
-  agent_id bigint NOT NULL REFERENCES attobot.agents(id) ON DELETE CASCADE,
-  hash text NOT NULL,
-  content bytea NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (agent_id, hash)
-);
-
-ALTER TABLE attotools.blobs ALTER COLUMN content SET STORAGE EXTERNAL;
-
 CREATE OR REPLACE FUNCTION attotools._append_tool_message(
   p_agent_id bigint,
   p_tool_call_id text,
@@ -107,7 +94,7 @@ $$;
 -- SEND_ATTACHMENT: decode inline media bytes, auto-detect image/audio/video via
 -- pg_ffmpeg, and queue an outbound system message (channel='telegram') that the
 -- outbound trigger delivers. The media bytes ride in the message payload as
--- base64 (not in attotools.blobs), so media produced by an ffmpeg function
+-- base64, so media produced by an ffmpeg function
 -- (thumbnail/transcode/waveform/generate_gif/...) can be sent in one call.
 -- queue_outbound_attachment (SECURITY DEFINER, owner attobot_agent_primary) does
 -- the privileged append so this works even when the caller is the anonymous
@@ -133,7 +120,7 @@ BEGIN
     RAISE EXCEPTION 'SEND_ATTACHMENT has no current agent context';
   END IF;
 
-  v_bytes := attotools._blob_decode_content(p_content, p_encoding);
+  v_bytes := attotools._decode_content(p_content, p_encoding);
   v_kind := attotools._attachment_kind(v_bytes, p_mime_type, p_filename);
 
   SELECT slug, chat_id INTO v_slug, v_chat_id
@@ -156,7 +143,7 @@ END;
 $$;
 COMMENT ON FUNCTION attotools._tool_send_attachment(text, text, text, text, text) IS 'Send media (image/audio/video) as a Telegram attachment. Pass the raw content with an encoding (base64, hex, escape, or a text encoding like UTF8). The kind is auto-detected from mime_type/filename, falling back to ffmpeg.media_info: photos use sendPhoto, audio sendAudio, video sendVideo, anything else sendDocument.';
 
-CREATE OR REPLACE FUNCTION attotools._blob_decode_content(
+CREATE OR REPLACE FUNCTION attotools._decode_content(
   p_content text,
   p_encoding text
 )
@@ -181,91 +168,9 @@ BEGIN
   RETURN convert_to(p_content, v_encoding);
 
 EXCEPTION WHEN others THEN
-  RAISE EXCEPTION 'could not decode blob content with encoding "%": %', v_encoding, SQLERRM;
+  RAISE EXCEPTION 'could not decode content with encoding "%": %', v_encoding, SQLERRM;
 END;
 $$;
-
-CREATE OR REPLACE FUNCTION attotools._blob_encode_content(
-  p_content bytea,
-  p_encoding text DEFAULT 'UTF8'
-)
-RETURNS text
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_encoding text := btrim(coalesce(p_encoding, 'UTF8'));
-  v_format text := lower(btrim(coalesce(p_encoding, 'UTF8')));
-BEGIN
-  IF p_content IS NULL THEN
-    RETURN NULL;
-  END IF;
-  IF v_encoding = '' THEN
-    v_encoding := 'UTF8';
-    v_format := 'utf8';
-  END IF;
-
-  IF v_format IN ('base64', 'hex', 'escape') THEN
-    RETURN encode(p_content, v_format);
-  END IF;
-
-  RETURN convert_from(p_content, v_encoding);
-
-EXCEPTION WHEN others THEN
-  RAISE EXCEPTION 'could not encode blob content with encoding "%": %', v_encoding, SQLERRM;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION attotools._tool_write_blob(
-  p_content text,
-  p_encoding text
-)
-RETURNS text
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_agent_id bigint := nullif(current_setting('attobot.current_agent_id', true), '')::bigint;
-  v_bytes bytea;
-  v_hash text;
-BEGIN
-  v_bytes := attotools._blob_decode_content(p_content, p_encoding);
-  v_hash := left(md5(v_bytes), 12);
-
-  INSERT INTO attotools.blobs(agent_id, hash, content)
-  VALUES (v_agent_id, v_hash, v_bytes)
-  ON CONFLICT (agent_id, hash) DO NOTHING;
-
-  RETURN jsonb_build_object(
-    'hash', v_hash,
-    'bytes', length(v_bytes),
-    'marker', '[blob ' || v_hash || ']'
-  )::text;
-END;
-$$;
-COMMENT ON FUNCTION attotools._tool_write_blob(text, text) IS 'Write data to attotools.blobs. The content is decoded using encoding: base64, hex, escape, or a PostgreSQL text encoding such as UTF8, LATIN1, or WIN1252.';
-
-CREATE OR REPLACE FUNCTION attotools._tool_read_blob(
-  p_hash text,
-  p_encoding text DEFAULT 'UTF8'
-)
-RETURNS text
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_agent_id bigint := nullif(current_setting('attobot.current_agent_id', true), '')::bigint;
-  v_content bytea;
-BEGIN
-  SELECT content INTO v_content
-  FROM attotools.blobs
-  WHERE agent_id = v_agent_id AND hash = p_hash;
-
-  IF v_content IS NULL THEN
-    RETURN 'error: blob not found';
-  END IF;
-
-  RETURN attotools._blob_encode_content(v_content, coalesce(p_encoding, 'UTF8'));
-END;
-$$;
-COMMENT ON FUNCTION attotools._tool_read_blob(text, text) IS 'Read blob data by hash. The result is encoded using encoding: base64, hex, escape, or a PostgreSQL text encoding such as UTF8.';
 
 CREATE OR REPLACE FUNCTION attotools._url_decode(p_text text)
 RETURNS text
@@ -697,10 +602,6 @@ BEGIN
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
-      WHEN 'WRITE_BLOB' THEN attotools._tool_write_blob(
-            coalesce(p_args->>'content', ''), coalesce(p_args->>'encoding', ''))
-      WHEN 'READ_BLOB' THEN attotools._tool_read_blob(
-            coalesce(p_args->>'hash', ''), coalesce(p_args->>'encoding', 'UTF8'))
       ELSE NULL
     END;
   EXCEPTION WHEN OTHERS THEN
