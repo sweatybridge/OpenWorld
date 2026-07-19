@@ -32,13 +32,89 @@ BEGIN
 END;
 $$;
 
--- SEND_ATTACHMENT: validate the blob (read as the acting role) and queue an
--- outbound system message (channel='telegram') that the outbound trigger
--- delivers. No outbox. queue_outbound_attachment (SECURITY DEFINER, owner
--- attobot_service) does the privileged append so this works even when the
--- caller is the anonymous acting role.
+-- Classify media bytes as 'photo' | 'audio' | 'video' | 'document' so
+-- SEND_ATTACHMENT can route to the matching Telegram send method
+-- (sendPhoto/sendAudio/sendVideo/sendDocument). Priority: explicit mime_type,
+-- then filename extension, then ffmpeg.media_info introspection of the container
+-- (falls back to 'document' when the bytes are unparseable). media_info yields
+-- {format, duration, streams:[{type:'video'|'audio'|..., codec, ...}]}.
+CREATE OR REPLACE FUNCTION attotools._attachment_kind(
+  p_bytes bytea,
+  p_mime_type text,
+  p_filename text
+)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  v_mime text := lower(btrim(coalesce(p_mime_type, '')));
+  v_ext text := lower(regexp_replace(coalesce(p_filename, ''), '^.*\.', ''));
+  v_info jsonb;
+  v_streams jsonb;
+  v_has_video boolean;
+  v_has_audio boolean;
+  v_duration float8;
+  v_video_codec text;
+BEGIN
+  -- 1. explicit mime_type wins
+  IF v_mime LIKE 'image/%' THEN RETURN 'photo'; END IF;
+  IF v_mime LIKE 'audio/%' THEN RETURN 'audio'; END IF;
+  IF v_mime LIKE 'video/%' THEN RETURN 'video'; END IF;
+
+  -- 2. filename extension
+  IF v_ext IN ('jpg','jpeg','png','webp','gif','bmp','tif','tiff','heic') THEN RETURN 'photo'; END IF;
+  IF v_ext IN ('mp3','m4a','aac','wav','ogg','oga','flac','opus','wma') THEN RETURN 'audio'; END IF;
+  IF v_ext IN ('mp4','m4v','mov','avi','mkv','webm','3gp','mpeg','mpg','ts','mts') THEN RETURN 'video'; END IF;
+
+  -- 3. ffmpeg introspection; tolerate unparseable/corrupt input.
+  BEGIN
+    v_info := ffmpeg.media_info(p_bytes);
+  EXCEPTION WHEN others THEN
+    RETURN 'document';
+  END;
+
+  v_streams := coalesce(v_info->'streams', '[]'::jsonb);
+  v_duration := nullif(v_info->>'duration', '')::float8;
+  v_has_video := EXISTS (SELECT 1 FROM jsonb_array_elements(v_streams) s WHERE s.value->>'type' = 'video');
+  v_has_audio := EXISTS (SELECT 1 FROM jsonb_array_elements(v_streams) s WHERE s.value->>'type' = 'audio');
+
+  IF v_has_video THEN
+    SELECT s.value->>'codec' INTO v_video_codec
+    FROM jsonb_array_elements(v_streams) s
+    WHERE s.value->>'type' = 'video'
+    LIMIT 1;
+
+    -- A standalone image (PNG/JPEG/...) demuxes as a single video stream with an
+    -- image codec, no audio, and no real duration. Anything else with a video
+    -- stream is a video.
+    IF v_video_codec IN ('png','mjpeg','jpeg','jpegls','webp','bmp','tiff','gif')
+       AND NOT v_has_audio
+       AND v_duration IS NULL THEN
+      RETURN 'photo';
+    END IF;
+    RETURN 'video';
+  END IF;
+
+  IF v_has_audio THEN
+    RETURN 'audio';
+  END IF;
+
+  RETURN 'document';
+END;
+$$;
+
+-- SEND_ATTACHMENT: decode inline media bytes, auto-detect image/audio/video via
+-- pg_ffmpeg, and queue an outbound system message (channel='telegram') that the
+-- outbound trigger delivers. The media bytes ride in the message payload as
+-- base64 (not in attotools.blobs), so media produced by an ffmpeg function
+-- (thumbnail/transcode/waveform/generate_gif/...) can be sent in one call.
+-- queue_outbound_attachment (SECURITY DEFINER, owner attobot_agent_primary) does
+-- the privileged append so this works even when the caller is the anonymous
+-- acting role.
 CREATE OR REPLACE FUNCTION attotools._tool_send_attachment(
-  p_hash text,
+  p_content text,
+  p_encoding text,
   p_filename text DEFAULT '',
   p_caption text DEFAULT '',
   p_mime_type text DEFAULT ''
@@ -48,22 +124,17 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_agent_id bigint := nullif(current_setting('attobot.current_agent_id', true), '')::bigint;
-  v_hash text := btrim(coalesce(p_hash, ''));
+  v_bytes bytea;
+  v_kind text;
   v_slug text;
   v_chat_id text;
 BEGIN
   IF v_agent_id IS NULL THEN
     RAISE EXCEPTION 'SEND_ATTACHMENT has no current agent context';
   END IF;
-  IF v_hash = '' THEN
-    RAISE EXCEPTION 'SEND_ATTACHMENT requires hash';
-  END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM attotools.blobs WHERE agent_id = v_agent_id AND hash = v_hash
-  ) THEN
-    RAISE EXCEPTION 'blob not found: %', v_hash;
-  END IF;
+  v_bytes := attotools._blob_decode_content(p_content, p_encoding);
+  v_kind := attotools._attachment_kind(v_bytes, p_mime_type, p_filename);
 
   SELECT slug, chat_id INTO v_slug, v_chat_id
   FROM attobot.messages m JOIN attobot.agents a ON a.id = m.agent_id
@@ -71,17 +142,19 @@ BEGIN
   ORDER BY m.id DESC LIMIT 1;
 
   PERFORM attobot.queue_outbound_attachment(
-    v_slug, v_hash,
+    v_slug,
+    encode(v_bytes, 'base64'),
+    v_kind,
     nullif(p_filename, ''),
     nullif(p_caption, ''),
     nullif(p_mime_type, ''),
     v_chat_id
   );
 
-  RETURN jsonb_build_object('queued', true, 'blob_hash', v_hash)::text;
+  RETURN jsonb_build_object('queued', true, 'kind', v_kind, 'bytes', length(v_bytes))::text;
 END;
 $$;
-COMMENT ON FUNCTION attotools._tool_send_attachment(text, text, text, text) IS 'Send blob content as a Telegram document attachment. Use WRITE_BLOB first, then pass the returned hash.';
+COMMENT ON FUNCTION attotools._tool_send_attachment(text, text, text, text, text) IS 'Send media (image/audio/video) as a Telegram attachment. Pass the raw content with an encoding (base64, hex, escape, or a text encoding like UTF8). The kind is auto-detected from mime_type/filename, falling back to ffmpeg.media_info: photos use sendPhoto, audio sendAudio, video sendVideo, anything else sendDocument.';
 
 CREATE OR REPLACE FUNCTION attotools._blob_decode_content(
   p_content text,
@@ -619,7 +692,8 @@ BEGIN
             coalesce(p_args->>'command', ''),
             coalesce(p_args->>'host', ''))
       WHEN 'SEND_ATTACHMENT' THEN attotools._tool_send_attachment(
-            coalesce(p_args->>'hash', ''),
+            coalesce(p_args->>'content', ''),
+            coalesce(p_args->>'encoding', ''),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))

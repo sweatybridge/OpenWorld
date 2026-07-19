@@ -321,8 +321,22 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA attotools
   TO attobot_anonymous, attobot_authenticated, attobot_service,
      attobot_agent_primary, attobot_agent_subconscious;
 
+-- pg_ffmpeg (schema 'ffmpeg') is used by SEND_ATTACHMENT's _attachment_kind to
+-- detect image/audio/video via ffmpeg.media_info, which runs SET ROLE'd to the
+-- acting role inside run_tool_call_as_role. Grant USAGE + EXECUTE broadly (the
+-- agent may also call ffmpeg functions directly via the SQL tool).
+GRANT USAGE ON SCHEMA ffmpeg
+  TO attobot_anonymous, attobot_authenticated, attobot_service,
+     attobot_agent_primary, attobot_agent_subconscious;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ffmpeg
+  TO attobot_anonymous, attobot_authenticated, attobot_service,
+     attobot_agent_primary, attobot_agent_subconscious;
+GRANT SELECT ON ALL TABLES IN SCHEMA ffmpeg
+  TO attobot_anonymous, attobot_authenticated, attobot_service,
+     attobot_agent_primary, attobot_agent_subconscious;
+
 -- TODO: move this function to attotools or telegram schema
-GRANT EXECUTE ON FUNCTION attobot.queue_outbound_attachment(text, text, text, text, text, text)
+GRANT EXECUTE ON FUNCTION attobot.queue_outbound_attachment(text, text, text, text, text, text, text)
   TO attobot_anonymous, attobot_authenticated;
 
 -- ============================================================================
@@ -367,7 +381,7 @@ GRANT attobot_service TO attobot_agent_subconscious;
 -- inert for INVOKER functions, so these are not re-owned here.
 ALTER FUNCTION attobot.ensure_telegram_inbox_loop(text, integer)       OWNER TO attobot_agent_primary;
 ALTER FUNCTION attobot.ensure_agent_cron_loop(text, text, text, text)  OWNER TO attobot_agent_subconscious;
-ALTER FUNCTION attobot.queue_outbound_attachment(text, text, text, text, text, text) OWNER TO attobot_agent_primary;
+ALTER FUNCTION attobot.queue_outbound_attachment(text, text, text, text, text, text, text) OWNER TO attobot_agent_primary;
 
 -- ============================================================================
 -- CONTEXT HELPER  (sets the ABAC session attributes; see design §10.2)
