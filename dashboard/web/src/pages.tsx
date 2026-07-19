@@ -471,7 +471,7 @@ function MessageBubble({ m }: { m: MessageRow }) {
           ))}
         </ul>
       )}
-      {payload && Object.keys(payload).length > 0 && toolCalls.length === 0 && (
+      {payload && Object.keys(payload).length > 0 && (
         <details className="node-result"><summary>payload</summary><JsonText value={payload} /></details>
       )}
     </div>
