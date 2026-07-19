@@ -787,6 +787,29 @@ BEGIN
 END;
 $$;
 
+-- Strip pg_durable's df.result() envelope to recover a tool call's own result
+-- text. Each tool call runs as a one-node graph whose body is
+-- `SELECT attotools.run_tool_call_as_role(...)::text AS result`, and df.result()
+-- exposes a node's terminal SELECT wrapped as {"rows":[{<cols>}],"row_count":N}.
+-- So the single row comes back as {"rows":[{"result": <text>}],"row_count":1},
+-- with the tool's actual output (_tool_sql's {"rows":...,"row_count":...}, BASH
+-- stdout, an error string) sitting at rows[0].result as a JSON string. Returning
+-- that verbatim would replay a double-wrapped blob to the LLM every turn.
+--
+-- The earlier form read a top-level `result` key (->>'result'), which df.result()
+-- never sets — the value is nested under rows[0] — so coalesce always fell through
+-- and stored the whole envelope. Anything without a rows[0].result (df.result
+-- raised and the caller stored an 'error: ...' string, or a non-JSON value) is
+-- returned unchanged. Pure (IMMUTABLE) so it can be unit-tested without df.start,
+-- which the test harness can't run.
+CREATE OR REPLACE FUNCTION attotools._unwrap_tool_result(p_result text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT coalesce(attobot._try_jsonb(p_result) #>> '{rows,0,result}', p_result)
+$$;
+
 CREATE OR REPLACE FUNCTION attotools.await_tool_calls(
   p_agent_slug text,
   p_started text,
@@ -847,7 +870,7 @@ BEGIN
 
     BEGIN
       SELECT df.result(v_id) INTO v_result;
-      v_result := coalesce((attobot._try_jsonb(v_result)->>'result'), v_result);
+      v_result := attotools._unwrap_tool_result(v_result);
     EXCEPTION WHEN OTHERS THEN
       v_result := 'error: ' || SQLERRM;
     END;
