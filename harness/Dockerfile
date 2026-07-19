@@ -10,6 +10,13 @@ ARG PG_SSH_VERSION=0.3.0
 ARG PG_SSH_REPO=sweatybridge/pg_ssh
 ARG PG_SSH_SHA256=0d641c13f50555b40c19d986745cc9114c3453bca3e7aac08c57b196147d7a84
 
+ARG PG_FFMPEG_VERSION=0.3.4
+ARG PG_FFMPEG_REPO=sweatybridge/pg_ffmpeg
+# pg-ffmpeg-pg18_0.3.4-1.trixie_amd64.deb. The deb's Depends pull the FFmpeg 7.x
+# runtime shared libs (libavcodec/libavformat/...) from Debian trixie, so no PPA
+# and no shared_preload_libraries are required (pg_ffmpeg is SQL functions only).
+ARG PG_FFMPEG_SHA256=b810e7dcf4713b25013284b7e6a2f906681fa47052b31df39ecc5ac6406f988d
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
@@ -25,6 +32,12 @@ RUN set -eux; \
       -o "/tmp/${deb}" \
       "https://github.com/${PG_SSH_REPO}/releases/download/v${PG_SSH_VERSION}/${deb}"; \
     echo "${PG_SSH_SHA256}  /tmp/${deb}" | sha256sum -c -; \
+    # Download pg_ffmpeg package (FFmpeg media processing; used by SEND_ATTACHMENT)
+    deb="pg-ffmpeg-pg${PG_MAJOR}_${PG_FFMPEG_VERSION}-1.trixie_${TARGETARCH}.deb"; \
+    curl -fsSL \
+      -o "/tmp/${deb}" \
+      "https://github.com/${PG_FFMPEG_REPO}/releases/download/v${PG_FFMPEG_VERSION}/${deb}"; \
+    echo "${PG_FFMPEG_SHA256}  /tmp/${deb}" | sha256sum -c -; \
     # Install all extensions
     apt-get install -y --no-install-recommends /tmp/*.deb; \
     rm -f /tmp/*.deb; \

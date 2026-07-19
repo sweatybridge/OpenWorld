@@ -78,22 +78,25 @@ $$;
 
 CREATE OR REPLACE FUNCTION attobot._telegram_attachment_filename(
   p_filename text,
-  p_hash text
+  p_kind text,
+  p_msg_id bigint
 )
 RETURNS text
 LANGUAGE plpgsql
 IMMUTABLE
 AS $$
 DECLARE
-  v_filename text := coalesce(nullif(btrim(p_filename), ''), 'blob-' || p_hash || '.bin');
+  v_ext text := CASE p_kind WHEN 'photo' THEN 'jpg' WHEN 'audio' THEN 'mp3' WHEN 'video' THEN 'mp4' ELSE 'bin' END;
+  v_default text := 'attachment-' || coalesce(p_msg_id, 0) || '.' || v_ext;
+  v_filename text := coalesce(nullif(btrim(p_filename), ''), v_default);
 BEGIN
   v_filename := regexp_replace(v_filename, '[^A-Za-z0-9._-]+', '_', 'g');
   v_filename := left(v_filename, 160);
   IF v_filename = '' OR v_filename IN ('.', '..') THEN
-    v_filename := 'blob-' || p_hash || '.bin';
+    v_filename := v_default;
   END IF;
   IF left(v_filename, 1) = '.' THEN
-    v_filename := 'blob-' || p_hash || v_filename;
+    v_filename := 'attachment-' || coalesce(p_msg_id, 0) || v_filename;
   END IF;
   RETURN v_filename;
 END;
@@ -202,11 +205,14 @@ END;
 $$;
 
 -- Queue an outbound attachment by appending a system message (channel='telegram')
--- that the outbound trigger delivers. SECURITY DEFINER owner attobot_service so
--- it works even when called from the anonymous acting role inside a tool call.
+-- that the outbound trigger delivers. The media bytes (base64) and detected kind
+-- ride in the payload; send_message reads them and routes to sendPhoto/
+-- sendAudio/sendVideo/sendDocument. SECURITY DEFINER owner attobot_agent_primary
+-- so it works even when called from the anonymous acting role inside a tool call.
 CREATE OR REPLACE FUNCTION attobot.queue_outbound_attachment(
   p_agent_slug text,
-  p_blob_hash text,
+  p_content_b64 text,
+  p_kind text,
   p_filename text DEFAULT NULL,
   p_caption text DEFAULT NULL,
   p_mime_type text DEFAULT NULL,
@@ -228,14 +234,15 @@ BEGIN
   INSERT INTO attobot.messages(agent_id, role, content, payload, channel, chat_id)
   VALUES (
     v_agent_id, 'system', '',
-    jsonb_strip_nulls(jsonb_build_object(
+    jsonb_build_object(
       'attachment', jsonb_strip_nulls(jsonb_build_object(
-        'blob_hash', p_blob_hash,
+        'kind', coalesce(nullif(p_kind, ''), 'document'),
+        'content', p_content_b64,
         'filename', nullif(p_filename, ''),
         'caption', nullif(p_caption, ''),
         'mime_type', nullif(p_mime_type, '')
       ))
-    )),
+    ),
     'telegram', p_chat_id
   )
   RETURNING id INTO v_id;
@@ -247,13 +254,14 @@ $$;
 -- Send one outbound message via Telegram. Called inside a send instance
 -- (df.start from the outbound trigger). A text reply is delivered upstream by
 -- df.http (sendMessage) in the send graph (p_http_response carries that
--- result); an attachment is uploaded here via curl (sendDocument).
+-- result); an attachment is uploaded here via curl (sendPhoto/sendAudio/
+-- sendVideo/sendDocument, chosen by the kind queued with the attachment).
 --
 -- SELF-BINDS the agent GUC: the send instance runs in its own transaction,
 -- separate from the outbound trigger whose is_local bind does not survive into
--- here, so the agent-scoped reads (messages/config/blobs) resolve under RLS.
--- The slug is threaded in (rather than read from the message) so the GUC can be
--- bound before the agent-scoped message read.
+-- here, so the agent-scoped reads (messages/config) resolve under RLS. The slug
+-- is threaded in (rather than read from the message) so the GUC can be bound
+-- before the agent-scoped message read.
 CREATE OR REPLACE FUNCTION attobot.send_message(
   p_agent_slug text,
   p_message_id bigint,
@@ -269,7 +277,10 @@ DECLARE
   v_msg attobot.messages%ROWTYPE;
   v_chat_id text;
   v_thread_id text;
-  v_blob_hash text;
+  v_att jsonb;
+  v_kind text;
+  v_method text;
+  v_field text;
   v_content bytea;
   v_filename text;
   v_mime_type text;
@@ -291,27 +302,33 @@ BEGIN
     RETURN jsonb_build_object('sent', v_status >= 200 AND v_status < 300, 'status', v_status);
   END IF;
 
-  -- Attachment via curl multipart.
+  -- Attachment via curl multipart. The media bytes and detected kind were queued
+  -- in the message payload (base64); decode them and pick the Telegram method +
+  -- form field by kind.
   SELECT * INTO v_msg FROM attobot.messages WHERE id = p_message_id;
   IF v_msg.id IS NULL THEN
     RETURN jsonb_build_object('sent', false, 'reason', 'message not found');
   END IF;
-  v_blob_hash := v_msg.payload #>> '{attachment,blob_hash}';
+  v_att := v_msg.payload->'attachment';
 
-  SELECT content INTO v_content FROM attotools.blobs WHERE agent_id = v_agent_id AND hash = v_blob_hash;
-  IF v_content IS NULL THEN
-    RETURN jsonb_build_object('sent', false, 'reason', 'blob not found');
+  v_content := decode(coalesce(v_att->>'content', ''), 'base64');
+  IF v_content IS NULL OR length(v_content) = 0 THEN
+    RETURN jsonb_build_object('sent', false, 'reason', 'attachment has no content');
   END IF;
+
+  v_kind := coalesce(nullif(v_att->>'kind', ''), 'document');
+  v_method := CASE v_kind WHEN 'photo' THEN 'sendPhoto' WHEN 'audio' THEN 'sendAudio' WHEN 'video' THEN 'sendVideo' ELSE 'sendDocument' END;
+  v_field  := CASE v_kind WHEN 'photo' THEN 'photo'    WHEN 'audio' THEN 'audio'   WHEN 'video' THEN 'video'   ELSE 'document'  END;
 
   v_chat_id := coalesce(nullif(v_msg.chat_id, ''), attobot._config_text(v_agent_id, 'telegram_chat_id'));
   v_thread_id := attobot._config_text(v_agent_id, 'telegram_thread_id');
-  v_filename := attobot._telegram_attachment_filename(v_msg.payload #>> '{attachment,filename}', v_blob_hash);
-  v_mime_type := coalesce(nullif(btrim(v_msg.payload #>> '{attachment,mime_type}'), ''), 'application/octet-stream');
+  v_filename := attobot._telegram_attachment_filename(v_att->>'filename', v_kind, p_message_id);
+  v_mime_type := coalesce(nullif(btrim(v_att->>'mime_type'), ''), 'application/octet-stream');
   IF v_mime_type !~ '^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$' THEN
     v_mime_type := 'application/octet-stream';
   END IF;
-  v_caption := left(coalesce(v_msg.payload #>> '{attachment,caption}', ''), 1024);
-  v_url := attobot._telegram_api_url(p_agent_slug, 'sendDocument');
+  v_caption := left(coalesce(v_att->>'caption', ''), 1024);
+  v_url := attobot._telegram_api_url(p_agent_slug, v_method);
 
   PERFORM attobot._program_output('mkdir -p /tmp/attobot-telegram');
   v_oid := lo_from_bytea(0, v_content);
@@ -326,7 +343,7 @@ BEGIN
       THEN ' --form-string ' || attobot._shell_quote('message_thread_id=' || v_thread_id) ELSE '' END ||
     CASE WHEN v_caption <> ''
       THEN ' --form-string ' || attobot._shell_quote('caption=' || v_caption) ELSE '' END ||
-    ' --form ' || attobot._shell_quote('document=@' || v_path || ';filename=' || v_filename || ';type=' || v_mime_type);
+    ' --form ' || attobot._shell_quote(v_field || '=@' || v_path || ';filename=' || v_filename || ';type=' || v_mime_type);
 
   BEGIN
     v_output := attobot._program_output(v_command);
@@ -377,7 +394,7 @@ DECLARE
   v_msg attobot.messages%ROWTYPE;
   v_chat_id text;
   v_thread_id text;
-  v_blob_hash text;
+  v_is_attachment boolean;
   v_tools text;
   v_body jsonb;
 BEGIN
@@ -386,9 +403,11 @@ BEGIN
   SELECT * INTO v_msg FROM attobot.messages WHERE id = p_message_id;
   v_chat_id := coalesce(nullif(v_msg.chat_id, ''), attobot._config_text(v_agent_id, 'telegram_chat_id'));
   v_thread_id := attobot._config_text(v_agent_id, 'telegram_thread_id');
-  v_blob_hash := v_msg.payload #>> '{attachment,blob_hash}';
+  v_is_attachment := v_msg.payload ? 'attachment'
+    AND jsonb_typeof(v_msg.payload->'attachment') = 'object'
+    AND (v_msg.payload->'attachment') ? 'content';
 
-  IF v_blob_hash IS NOT NULL THEN
+  IF v_is_attachment THEN
     -- attachment: send_message uploads via curl (self-binds the GUC)
     RETURN format('SELECT attobot.send_message(%L, %s)::jsonb AS result', p_agent_slug, p_message_id);
   END IF;
