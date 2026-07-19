@@ -293,6 +293,61 @@ BEGIN
 END;
 $$;
 
+-- Walk a jsonb value from a SQL-tool result and replace bytea-derived string
+-- leaves with a size marker. to_jsonb renders bytea as backslash-x + lowercase
+-- hex (2 chars/byte, always even-length); a query that selects a bytea column —
+-- or an inline ffmpeg.* output (thumbnails/transcodes/waveforms return bytea) —
+-- would otherwise dump that hex into the tool result, which is stored as the
+-- role='tool' message and replayed to the LLM every turn, blowing the context
+-- window. The bytes are useless to the model as text, so we drop them at
+-- result-build time (mirroring how _webfetch_result caps its body). Recurses
+-- through objects and arrays so bytea[], composite columns, and nested values
+-- are caught. The backslash is matched via chr(92) (no literal '\' in source) so
+-- the check is immune to standard_conforming_strings. A genuine text value that
+-- is exactly backslash-x + even-length lowercase hex would also be redacted —
+-- vanishingly rare, and it only costs a marker.
+CREATE OR REPLACE FUNCTION attotools._redact_bytea_json(p_value jsonb, p_key text DEFAULT NULL)
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_str text;
+  v_bytes integer;
+BEGIN
+  CASE jsonb_typeof(p_value)
+    WHEN 'string' THEN
+      v_str := p_value #>> '{}';
+      IF length(v_str) >= 4
+         AND left(v_str, 2) = chr(92) || 'x'
+         AND substr(v_str, 3) ~ '^[0-9a-f]+$'
+         AND mod(length(v_str) - 2, 2) = 0
+      THEN
+        v_bytes := (length(v_str) - 2) / 2;
+        RETURN to_jsonb(
+          CASE WHEN p_key IS NULL
+               THEN '[bytea ' || v_bytes || ' bytes]'
+               ELSE '[bytea ' || v_bytes || ' bytes, column "' || p_key || '"]'
+          END
+        );
+      END IF;
+      RETURN p_value;
+    WHEN 'object' THEN
+      RETURN (
+        SELECT coalesce(jsonb_object_agg(key, attotools._redact_bytea_json(value, key)), '{}'::jsonb)
+        FROM jsonb_each(p_value)
+      );
+    WHEN 'array' THEN
+      RETURN (
+        SELECT coalesce(jsonb_agg(attotools._redact_bytea_json(value, NULL) ORDER BY ordinality), '[]'::jsonb)
+        FROM jsonb_array_elements(p_value) WITH ORDINALITY AS arr(value, ordinality)
+      );
+    ELSE
+      RETURN p_value;
+  END CASE;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION attotools._tool_sql(p_query text)
 RETURNS text
 LANGUAGE plpgsql
@@ -319,6 +374,10 @@ BEGIN
     v_query
   )
   INTO v_rows;
+
+  -- Strip bytea-derived hex (binary columns / inline ffmpeg.* outputs) so it
+  -- never reaches the LLM via the tool result. See _redact_bytea_json.
+  v_rows := attotools._redact_bytea_json(coalesce(v_rows, '[]'::jsonb));
 
   RETURN jsonb_pretty(jsonb_build_object(
     'rows', coalesce(v_rows, '[]'::jsonb),

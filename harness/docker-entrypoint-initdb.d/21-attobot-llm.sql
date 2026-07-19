@@ -1,3 +1,62 @@
+-- Redact blob/attachment bytes from a tool call's arguments before replaying an
+-- assistant turn to the LLM. SEND_ATTACHMENT carries media bytes as base64 in
+-- arguments.content; those bytes were already consumed (delivered to Telegram)
+-- when the call executed, so on history replay the model only needs a size
+-- marker. Without this, every prior attachment call is re-sent verbatim each
+-- turn and blows the context window. arguments is a JSON-encoded string in the
+-- OpenAI tool-call shape; we leave it (and any call to another tool) untouched
+-- when it does not parse or has no content key.
+CREATE OR REPLACE FUNCTION attobot._redact_tool_call_args(p_name text, p_args text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_json jsonb;
+  v_len integer;
+BEGIN
+  IF p_name IS NULL OR p_name NOT IN ('SEND_ATTACHMENT') THEN
+    RETURN p_args;
+  END IF;
+
+  v_json := attobot._try_jsonb(p_args);
+  -- _try_jsonb yields {"_raw": ...} on parse failure and {} for empty input; only
+  -- redact when it parsed to an object that actually has a content key.
+  IF (v_json ? '_raw') OR NOT (v_json ? 'content') THEN
+    RETURN p_args;
+  END IF;
+
+  v_len := length(coalesce(v_json->>'content', ''));
+  RETURN jsonb_set(v_json, '{content}', to_jsonb('[redacted ' || v_len || ' chars]'::text))::text;
+END;
+$$;
+
+-- Apply _redact_tool_call_args across a tool_calls array. Only string-typed
+-- arguments (the OpenAI shape) are rewritten; an object-typed arguments is left
+-- as-is so a non-conforming provider is never corrupted. Order is preserved.
+CREATE OR REPLACE FUNCTION attobot._redact_tool_calls(p_tool_calls jsonb)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT coalesce(jsonb_agg(
+           CASE
+             WHEN jsonb_typeof(e.value #> '{function,arguments}') = 'string'
+             THEN jsonb_set(
+                    e.value,
+                    '{function,arguments}',
+                    to_jsonb(attobot._redact_tool_call_args(
+                      e.value #>> '{function,name}',
+                      e.value #>> '{function,arguments}'
+                    ))
+                  )
+             ELSE e.value
+           END
+           ORDER BY e.ordinality
+         ), '[]'::jsonb)
+  FROM jsonb_array_elements(p_tool_calls) WITH ORDINALITY AS e(value, ordinality)
+$$;
+
 CREATE OR REPLACE FUNCTION attobot._message_for_openai(p_message attobot.messages)
 RETURNS jsonb
 LANGUAGE sql
@@ -12,7 +71,8 @@ AS $$
     )
     || CASE
       WHEN p_message.payload ? 'tool_calls'
-      THEN jsonb_build_object('tool_calls', p_message.payload->'tool_calls')
+           AND jsonb_typeof(p_message.payload->'tool_calls') = 'array'
+      THEN jsonb_build_object('tool_calls', attobot._redact_tool_calls(p_message.payload->'tool_calls'))
       ELSE '{}'::jsonb
     END
   );
