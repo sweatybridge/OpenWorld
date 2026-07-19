@@ -19,7 +19,7 @@
 -- so truncating messages fires no durable side effects. Runs as superuser.
 TRUNCATE attobot.memory_sources, attobot.memory, attobot.messages,
          attobot.config, attobot.users,
-         attobot.agents, attobot.models, attotools.blobs
+         attobot.agents, attobot.models
 RESTART IDENTITY CASCADE;
 
 -- one model row
@@ -64,12 +64,6 @@ INSERT INTO attobot.memory(agent_id, content)
 SELECT a.id, 'mem-' || a.slug FROM attobot.agents a
 WHERE a.slug IN ('primary', 'subconscious')
 ON CONFLICT DO NOTHING;
-
--- blobs: one per agent
-INSERT INTO attotools.blobs(agent_id, hash, content)
-SELECT a.id, 'probe-' || a.slug, decode('00', 'hex')
-FROM attobot.agents a WHERE a.slug IN ('primary', 'subconscious')
-ON CONFLICT (agent_id, hash) DO NOTHING;
 
 -- channel identity ledger: one anonymous + one authenticated telegram user
 INSERT INTO attobot.users(channel, external_id, username, tier)

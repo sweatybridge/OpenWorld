@@ -21,7 +21,6 @@ struct MenuView: View {
         Item(route: .memory(), icon: "🧠", label: "Memory"),
         Item(route: .users, icon: "👥", label: "Users"),
         Item(route: .config(), icon: "⚙️", label: "Config"),
-        Item(route: .blobs(), icon: "📗", label: "Blobs"),
     ]
 
     var body: some View {

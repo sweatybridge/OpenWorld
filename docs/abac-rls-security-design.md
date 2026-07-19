@@ -24,7 +24,7 @@ even though `service` is `BYPASSRLS` (no grant → no rows). See `config` in
 
 AttoBot is a Postgres-resident agent harness: agent state, the conversation
 stream, tool calls, memory, and the outbound queue live in tables under
-`attobot`; blob storage under `attotools`. The system is driven by PL/pgSQL
+`attobot`. The system is driven by PL/pgSQL
 functions and `pg_durable` workflows that run **inside the database backend**.
 
 This PR delivers a least-privilege **Attribute-Based Access Control** layer over
@@ -118,7 +118,7 @@ NULL when unset → `NULL = x` → NULL → **deny**):
 
 | GUC | Set by | Read by RLS policies for |
 |---|---|---|
-| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoping of `messages`, `memory`, `memory_sources`, `config`, `blobs` |
+| `attobot.current_agent_id` | turn/tool bootstrap | agent-scoping of `messages`, `memory`, `memory_sources`, `config` |
 | `attobot.current_chat_id` | tool bootstrap | `messages` chat-wide SELECT (the configured chat) |
 | `attobot.current_user_id` | tool bootstrap | `users` own-row SELECT |
 | `attobot.current_role`, `attobot.current_channel`, `attobot.current_telegram_user_id` | `set_context` | carried for the loop/tool; no RLS policy reads them today |
@@ -169,7 +169,6 @@ approximation; per-message turns are a later refinement.)
 | `memory` | — | — | ALL own agent | ALL across agents | ALL |
 | `memory_sources` | — | — | ALL own agent | ALL across agents | ALL |
 | `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
-| `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
 The `attobot_dashboard` role is `BYPASSRLS` with `SELECT`/`EXECUTE` only across
@@ -239,7 +238,7 @@ All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `attobot_service` is
 - **messages** — as [§8](#8-the-worked-example-anonymous-group-chat-user-on-messages); users SELECT the configured chat only; agent roles `FOR ALL` on `agent_id = current_agent_id`.
 - **users** — own row by `id = current_user_id` for tiers; agents read all; `agent_primary` inserts/updates (no delete); service full.
 - **config** — agent roles `SELECT`/`INSERT`/`UPDATE` their **own rows incl. secrets**; tiers `SELECT` non-secret own only; `attobot_service` has no grant on the base table and reads non-secret rows only via the `config_public` view (secret-free LLM-SQL scope).
-- **memory / memory_sources / blobs** — agent-scoped by `current_agent_id`; `agent_primary` full-CRUDs its own; `agent_subconscious` full-CRUDs every agent's memory/memory_sources; tiers full-CRUD their own blobs (subconscious gets none).
+- **memory / memory_sources** — agent-scoped by `current_agent_id`; `agent_primary` full-CRUDs its own; `agent_subconscious` full-CRUDs every agent's.
 - **agents / models** — PUBLIC read; service/superuser writes.
 
 ---
@@ -248,7 +247,7 @@ All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `attobot_service` is
 
 When the primary agent runs the **SQL tool** during a user-requested turn, the
 query executes under the **requesting user's** RLS scope. (Other tools —
-blobs, attachments, web fetches — stay agent-scoped: they touch
+attachments, web fetches — stay agent-scoped: they touch
 agent-global state with no per-user dimension.)
 
 **Threading the requesting user.** Intake stamps the user onto the assistant

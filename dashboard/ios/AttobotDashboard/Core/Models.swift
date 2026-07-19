@@ -264,21 +264,6 @@ struct ConfigRow: Codable, Hashable {
     }
 }
 
-// MARK: - Blobs
-
-struct BlobRow: Codable, Hashable {
-    var agentId: Int64?
-    var hash: String?
-    var size: Int64?
-    var createdAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case agentId = "agent_id"
-        case hash, size
-        case createdAt = "created_at"
-    }
-}
-
 // MARK: - Generic list wrapper
 
 struct RowList<T: Decodable>: Decodable {
