@@ -96,11 +96,11 @@ private struct MessageBubble: View {
         let payload = message.payload ?? .null
         let toolCalls = extractToolCalls(payload)
         // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
-        // chain-of-thought in `reasoning_content` and leave `content` empty. The
-        // raw LLM message — reasoning_content included — is stored verbatim at
-        // payload.raw, so fall back to it when the visible reply is blank instead
-        // of showing an empty bubble.
-        let reasoning = payload["raw"]?["reasoning_content"]?.string ?? ""
+        // chain-of-thought in `reasoning_content` and leave `content` empty.
+        // record_assistant flattens the raw LLM message straight into the
+        // payload, so reasoning_content lives at the top level — fall back to it
+        // when the visible reply is blank instead of showing an empty bubble.
+        let reasoning = payload["reasoning_content"]?.string ?? ""
 
         VStack(alignment: .leading, spacing: 4) {
             // Meta row

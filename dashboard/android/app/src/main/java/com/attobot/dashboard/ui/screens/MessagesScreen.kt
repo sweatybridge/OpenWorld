@@ -145,13 +145,12 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
     val borderColor = ROLE_BORDER[m.role] ?: border
     var payloadOpen by rememberSaveable { mutableStateOf(false) }
     // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
-    // chain-of-thought in `reasoning_content` and leave `content` empty. The raw
-    // LLM message — reasoning_content included — is stored verbatim at
-    // payload.raw, so fall back to it when the visible reply is blank instead of
-    // showing an empty bubble.
+    // chain-of-thought in `reasoning_content` and leave `content` empty.
+    // record_assistant flattens the raw LLM message straight into the payload,
+    // so reasoning_content lives at the top level — fall back to it when the
+    // visible reply is blank instead of showing an empty bubble.
     val reasoning = run {
-        val raw = (payload as? JsonObject)?.get("raw") as? JsonObject ?: return@run ""
-        val rc = raw["reasoning_content"]
+        val rc = (payload as? JsonObject)?.get("reasoning_content")
         if (rc is JsonPrimitive && rc.isString) rc.content else ""
     }
 
