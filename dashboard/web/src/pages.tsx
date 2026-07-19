@@ -440,6 +440,13 @@ export function MessagesPage() {
 function MessageBubble({ m }: { m: MessageRow }) {
   const payload = m.payload as Record<string, unknown> | null;
   const toolCalls = Array.isArray(payload?.tool_calls) ? (payload!.tool_calls as Array<Record<string, unknown>>) : [];
+  // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
+  // chain-of-thought in `reasoning_content` and leave `content` empty. The raw
+  // LLM message — reasoning_content included — is stored verbatim at payload.raw,
+  // so fall back to it when the visible reply is blank instead of showing an
+  // empty bubble.
+  const raw = (payload?.raw ?? undefined) as Record<string, unknown> | undefined;
+  const reasoning = typeof raw?.reasoning_content === "string" ? raw.reasoning_content : "";
   return (
     <div className={`msg msg-${m.role}`}>
       <div className="msg-meta">
@@ -450,7 +457,14 @@ function MessageBubble({ m }: { m: MessageRow }) {
         <Link to={`/trace/${m.id}`} className="link" title="Trace this turn's workflows">trace</Link>
         <span className="msg-time" title={formatDateTime(m.created_at)}>{timeAgo(m.created_at)}</span>
       </div>
-      {m.content && <div className="msg-content">{m.content}</div>}
+      {m.content
+        ? <div className="msg-content">{m.content}</div>
+        : reasoning && (
+          <div className="msg-content msg-reasoning">
+            <span className="msg-reasoning-label">reasoning</span>
+            {reasoning}
+          </div>
+        )}
       {toolCalls.length > 0 && (
         <ul className="tool-calls">
           {toolCalls.map((tc, i) => (
