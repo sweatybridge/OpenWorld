@@ -236,8 +236,7 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
                             }
                         }
                     }
-                }
-                if (payload is JsonObject && payload.keys.isNotEmpty()) {
+                } else if (payload is JsonObject && payload.keys.isNotEmpty()) {
                     Column {
                         Text(
                             if (payloadOpen) "▾ payload" else "▸ payload",

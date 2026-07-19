@@ -437,9 +437,20 @@ export function MessagesPage() {
   );
 }
 
+type ToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: {
+      query: string;
+    };
+  };
+};
+
 function MessageBubble({ m }: { m: MessageRow }) {
   const payload = m.payload as Record<string, unknown> | null;
-  const toolCalls = Array.isArray(payload?.tool_calls) ? (payload!.tool_calls as Array<Record<string, unknown>>) : [];
+  const toolCalls = Array.isArray(payload?.tool_calls) ? (payload!.tool_calls as Array<ToolCall>) : [];
   // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
   // chain-of-thought in `reasoning_content` and leave `content` empty.
   // record_assistant flattens the raw LLM message straight into the payload, so
@@ -466,12 +477,12 @@ function MessageBubble({ m }: { m: MessageRow }) {
         )}
       {toolCalls.length > 0 && (
         <ul className="tool-calls">
-          {toolCalls.map((tc, i) => (
-            <li key={i}><code>{String(tc.name ?? "")}</code> <JsonView value={tc.arguments ?? tc.args} /></li>
+          {toolCalls.map(({ function: fn }, i) => (
+            <li key={i}><code>{String(fn.name ?? "")}</code> <JsonView value={fn.arguments ?? {}} /></li>
           ))}
         </ul>
       )}
-      {payload && Object.keys(payload).length > 0 && (
+      {payload && Object.keys(payload).length > 0 && toolCalls.length === 0 && (
         <details className="node-result"><summary>payload</summary><JsonText value={payload} /></details>
       )}
     </div>

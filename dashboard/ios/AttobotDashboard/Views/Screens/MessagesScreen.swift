@@ -155,8 +155,7 @@ private struct MessageBubble: View {
                     }
                 }
                 .padding(.top, 6)
-            }
-            if hasOtherPayload(payload) {
+            } else if hasOtherPayload(payload) {
                 VStack(alignment: .leading, spacing: 0) {
                     Button {
                         payloadOpen.toggle()
