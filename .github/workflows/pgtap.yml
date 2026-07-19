@@ -42,22 +42,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Use a buildx docker-container driver so the build step can read/write the
-      # GitHub Actions cache (the default "docker" driver can't).
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Build the pgtap image (harness/Dockerfile target: pgtap) with GHA layer
-      # caching. The base harness stage downloads + SHA-verifies three extension
-      # .debs from GitHub releases and the pgtap stage pulls pgTAP + pg_prove
-      # from the PG apt repo, so caching those layers keeps reruns fast.
+      # Build the pgtap image (harness/Dockerfile target: pgtap). The base
+      # harness stage downloads + SHA-verifies three extension .debs from GitHub
+      # releases and the pgtap stage pulls pgTAP + pg_prove from the PG apt repo,
+      # so this is the slow step (~2-3 min cold). Compose's --cache-from/--cache-to
+      # flags aren't accepted by the runner's docker compose version, so there's
+      # no cross-run layer caching here; if build time becomes a problem, switch
+      # the build to docker/build-push-action with type=gha cache + an `image:`
+      # tag in docker-compose.test.yml.
       - name: Build test image
-        env:
-          COMPOSE_DOCKER_CLI_BUILD: "1"
-        run: |
-          docker compose -f docker-compose.test.yml build \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max
+        run: docker compose -f docker-compose.test.yml build
 
       # `run --rm -T pgtap` starts test-db (the depends_on healthcheck gates
       # until the schema is loaded), then runs tests/run.sh against it. -T
