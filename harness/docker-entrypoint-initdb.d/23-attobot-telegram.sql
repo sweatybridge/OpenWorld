@@ -362,20 +362,28 @@ $$;
 
 -- Render an OpenAI tool_calls array as a compact, human-readable block so a
 -- tool-call assistant turn can be delivered to Telegram (where the raw turn is
--- usually empty text). One line per call: "🔧 NAME(<arguments json>)". Returns
--- '' when there are no calls or the input is not an array.
+-- usually empty text). One line per call: "🔧 NAME(<arguments json>)", wrapped
+-- in a fenced Markdown code block so the turn stands out from prose and the raw
+-- JSON arguments render verbatim (Telegram's Markdown parser otherwise mangles
+-- brackets/underscores/asterisks inside the args). Returns '' when there are
+-- no calls or the input is not an array — an empty input is not wrapped, to
+-- avoid emitting an empty code block.
 CREATE OR REPLACE FUNCTION attobot._render_tool_calls(p_tool_calls jsonb)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
 AS $$
-  SELECT coalesce(string_agg(
-    format('🔧 %s(%s)', tc -> 'function' ->> 'name', tc -> 'function' ->> 'arguments'),
-    E'\n'
-  ), '')
-  FROM jsonb_array_elements(
-    CASE WHEN jsonb_typeof(p_tool_calls) = 'array' THEN p_tool_calls ELSE '[]'::jsonb END
-  ) AS t(tc);
+  WITH rendered AS (
+    SELECT coalesce(string_agg(
+      format('🔧 %s(%s)', tc -> 'function' ->> 'name', tc -> 'function' ->> 'arguments'),
+      E'\n'
+    ), '') AS body
+    FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(p_tool_calls) = 'array' THEN p_tool_calls ELSE '[]'::jsonb END
+    ) AS t(tc)
+  )
+  SELECT CASE WHEN body = '' THEN body ELSE E'```\n' || body || E'\n```' END
+  FROM rendered;
 $$;
 
 -- Build the send-graph for an outbound message. Text → df.http sendMessage then
