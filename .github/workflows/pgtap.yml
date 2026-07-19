@@ -1,0 +1,61 @@
+name: pgtap
+
+# Runs the pgTAP RBAC/RLS permission-matrix suite in tests/pgtap/. The suite
+# pins down the entire permission matrix enforced by the harness init SQL
+# (40-attobot-rbac.sql, 41-dashboard-role.sql), so it gates every change to the
+# database schema or roles.
+#
+# Everything runs inside Docker via docker-compose.test.yml:
+#   - test-db: throwaway Postgres built from harness/Dockerfile (target: pgtap),
+#     which auto-loads the project schema on first boot.
+#   - pgtap:   one-shot runner that loads helpers/fixtures (tests/run.sh) and
+#     runs pg_prove against test-db. It never touches the live harness DB.
+# pg_prove exits non-zero on the first failing assertion, failing the job.
+
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - "harness/docker-entrypoint-initdb.d/**"
+      - "harness/Dockerfile"
+      - "tests/**"
+      - "docker-compose.test.yml"
+      - ".github/workflows/pgtap.yml"
+  pull_request:
+    paths:
+      - "harness/docker-entrypoint-initdb.d/**"
+      - "harness/Dockerfile"
+      - "tests/**"
+      - "docker-compose.test.yml"
+      - ".github/workflows/pgtap.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: pgtap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pgtap:
+    name: pgTAP permission-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the pgtap image (harness/Dockerfile target: pgtap). The base
+      # harness stage downloads + SHA-verifies three extension .debs from GitHub
+      # releases and the pgtap stage pulls pgTAP + pg_prove from the PG apt repo,
+      # so this is the slow step (~2-3 min cold). Compose's --cache-from/--cache-to
+      # flags aren't accepted by the runner's docker compose version, so there's
+      # no cross-run layer caching here; if build time becomes a problem, switch
+      # the build to docker/build-push-action with type=gha cache + an `image:`
+      # tag in docker-compose.test.yml.
+      - name: Build test image
+        run: docker compose -f docker-compose.test.yml build
+
+      # `run --rm -T pgtap` starts test-db (the depends_on healthcheck gates
+      # until the schema is loaded), then runs tests/run.sh against it. -T
+      # disables TTY allocation (CI has none). The container's exit code is the
+      # suite result, so a failing assertion fails the step.
+      - name: Run pgTAP suite
+        run: docker compose -f docker-compose.test.yml run --rm -T pgtap
