@@ -2,7 +2,7 @@
 
 attobot is a Postgres-resident agent harness. Agent state, turns, tool calls,
 memory, and outbound delivery all live in PostgreSQL tables under the
-`attobot` schema; tool-owned blob storage lives under `attotools`. Agents point
+`attobot` schema. Agents point
 at shared rows in `attobot.models`, so multiple agents can reuse the same model
 configuration. `pg_durable` owns the durable workflow execution, so a turn can
 survive database restarts and resume from its last checkpoint.
@@ -17,7 +17,6 @@ Postgres. The only other container is the one-shot `agent-init` seed job.
 - Accessing any internal state requires explicit evaluation of RLS policies.
 - ACID properties apply to the entire agent state. Referential integrity is maintained via foreign keys from memory to message history.
 - Prefer general purpose tools that are open to extension by LLM and closed to modification.
-- Files and large blobs are byte addressable and split into 4KB pages for efficient access on SSD.
 - Backup and restore should work across windows, linux, and macOS.
 - Semantic indexes can be created to support multimodal search, ie. pre-filling model context window with the right data.
 
@@ -45,8 +44,7 @@ appends new messages, and calls its own model. All assistant/system messages on
 The primary agent role runs the loop: it reads the shared `agents`/`models`
 rows, all `users` (and may create and edit users, but not delete them), its own
 `messages`, `memory`, `memory_sources` (full CRUD on its own agent), its own
-`attotools.blobs` (full CRUD, reached through its `anonymous`/`authenticated`
-membership), its own `config` (including secrets - needed to call the model).
+`config` (including secrets - needed to call the model).
 It cannot delete `messages`,
 `config`, or `users`, and cannot modify `agents`/`models`. Its tool calls drop
 to the requesting user's tier, which cannot read secrets. A running loop may be
@@ -55,7 +53,7 @@ interrupted or cancelled.
 The subconscious agent role runs its loop the same way (reading its own secrets
 to call its model). As its own role it sees its own `messages`, every agent's
 `memory` and `memory_sources` (full CRUD, to review and correct them), its own
-`config`, and all `users` (read-only); it cannot read `attotools.blobs`. Its tool calls drop to
+`config`, and all `users` (read-only). Its tool calls drop to
 `attobot_service`, a broad `BYPASSRLS` scope that reads non-secret `config` only
 (via the `config_public` view, so secrets stay out of the LLM SQL scope).
 
@@ -67,7 +65,6 @@ to call its model). As its own role it sees its own `messages`, every agent's
 | `memory` | - | - | ALL own agent | ALL across agents | ALL |
 | `memory_sources` | - | - | ALL own agent | ALL across agents | ALL |
 | `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
-| `attotools.blobs` | **full CRUD own agent** | full CRUD own agent | full CRUD own agent | **none (RLS-denied)** | ALL |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
 The `attobot_dashboard` role (the admin dashboard's DB principal) is `BYPASSRLS`

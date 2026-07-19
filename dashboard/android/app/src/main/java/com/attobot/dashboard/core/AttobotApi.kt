@@ -64,9 +64,6 @@ interface AttobotApi {
 
     @GET("api/config")
     suspend fun config(@Query("agent_id") agentId: String? = null): ConfigResponse
-
-    @GET("api/blobs")
-    suspend fun blobs(@Query("agent_id") agentId: String? = null): BlobsResponse
 }
 
 /**
@@ -194,7 +191,4 @@ object ApiProvider {
 
     suspend fun config(agentId: String? = null): List<ConfigRow> =
         req { config(agentId?.ifBlank { null }) }.rows
-
-    suspend fun blobs(agentId: String? = null): List<BlobRow> =
-        req { blobs(agentId?.ifBlank { null }) }.rows
 }

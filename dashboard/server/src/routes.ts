@@ -9,7 +9,6 @@ import {
   getWorkerEpoch,
   listAgentMessages,
   listAgents,
-  listBlobs,
   listConfig,
   listMemory,
   listUsers,
@@ -114,11 +113,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const rows = await listConfig(parseIntOrNull(q.agent_id));
     // Secrets masked before they ever leave the server.
     return { rows: maskConfig(rows) };
-  });
-
-  app.get("/api/blobs", async (req) => {
-    const q = req.query as Record<string, string | undefined>;
-    return { rows: await listBlobs(parseIntOrNull(q.agent_id)) };
   });
 
   // Re-export for parity / future use (e.g. a counts-only widget).

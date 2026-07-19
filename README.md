@@ -42,7 +42,6 @@ Detailed configuration, seeding, Telegram, and dashboard setup lives in
   `(channel, external_id)`; telegram intake (`poll_messages` → `upsert_user`)
   upserts senders, and `tier` maps a user to an RLS role suffix
   (`anonymous` / `authenticated`).
-- `attotools.blobs`: content-addressed large content storage as external `bytea`.
 
 ## Roles
 
@@ -93,9 +92,7 @@ The LLM sees these database-native tools (schemas are introsducted from the
 - `SEARCH`: search the public web and return titles, URLs, and snippets.
 - `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, and a truncated text body.
 - `BASH`: run a shell command on a registered remote host over SSH. `host` is optional and defaults to the first registered host when omitted.
-- `SEND_ATTACHMENT`: send a stored blob as a Telegram document attachment.
-- `WRITE_BLOB`: store large or binary content in `attotools.blobs`.
-- `READ_BLOB`: read blob content by hash in a chosen text encoding.
+- `SEND_ATTACHMENT`: send media (image/audio/video) as a Telegram attachment.
 - `SQL`: run a single SQL query that returns rows.
 
 `BASH` uses the `pg_ssh` extension's `ssh.exec(host_name, command)` function.

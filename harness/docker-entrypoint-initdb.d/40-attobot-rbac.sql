@@ -246,22 +246,6 @@ CREATE POLICY config_user_read_nonsecret ON attobot.config
   );
 
 -- ============================================================================
--- TABLE: attotools.blobs   (agent-scoped content store)
--- ============================================================================
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON attotools.blobs
-  TO attobot_anonymous, attobot_authenticated, attobot_service;
-
-ALTER TABLE attotools.blobs ENABLE ROW LEVEL SECURITY;
-
--- TODO: add user id to the blob table and scope to it, so users can only read their own blobs
-DROP POLICY IF EXISTS blobs_user_all_own ON attotools.blobs;
-CREATE POLICY blobs_user_all_own ON attotools.blobs
-  FOR ALL TO attobot_anonymous, attobot_authenticated
-  USING (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint)
-  WITH CHECK (agent_id = NULLIF(current_setting('attobot.current_agent_id', true), '')::bigint);
-
--- ============================================================================
 -- TABLE: attobot.users   (channel identity ledger; intake upserts telegram users)
 --   A user reads only their own row; agent/service read all (to resolve the
 --   requesting user during a turn); service inserts (upsert_user); the primary

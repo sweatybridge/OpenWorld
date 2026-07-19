@@ -34,13 +34,12 @@ any assertion fails; add `--build` to rebuild after editing the SQL.
 | File | Contents |
 |---|---|
 | `00_setup.sql` | `CREATE EXTENSION pgtap`; disables the message triggers that fire `df.start`; `pgtap_test.visible_count` / `pgtap_test.can` helpers |
-| `00_fixtures.sql` | baseline model / agents / config / messages / memory / blobs / users |
+| `00_fixtures.sql` | baseline model / agents / config / messages / memory / users |
 | `10_roles_meta.sql` | role existence, LOGIN/BYPASSRLS flags, memberships, schema/sequence grants |
 | `20_agents_models.sql` | PUBLIC read; service-only writes |
 | `30_messages.sql` | users SELECT chat-wide (no writes); agents own-agent SELECT/INSERT/UPDATE; service ALL; dashboard read-all |
 | `40_memory.sql` | `memory` + `memory_sources`: primary own-agent; subconscious all agents; service ALL |
 | `50_config.sql` | users non-secret own; agents own incl. secrets; service non-secret only via `config_public`; dashboard read-all |
-| `70_blobs.sql` | users full CRUD own; primary same via membership; subconscious denied; service ALL; dashboard read-all |
 | `80_users.sql` | users own-row; primary SELECT all + INSERT/UPDATE; subconscious SELECT all; service ALL; dashboard read-all |
 
 ## Access-matrix notes (suite ↔ docs in sync)
@@ -52,9 +51,7 @@ A few cells are non-obvious least-privilege decisions worth calling out:
 | # | Table | Cell | Behaviour |
 |---|---|---|---|
 | 1 | `messages` | anonymous/authenticated | **SELECT only** — the configured chat is one agent = one chat, so a user reads all of it; the agent role appends/edits on their behalf. Users never write. |
-| 2 | `attotools.blobs` | anonymous/authenticated | **full CRUD** on own agent — needed by the `WRITE_BLOB`/`READ_BLOB` tools (the user tier is primary's tool scope). |
-| 3 | `config` | service | **non-secret only**, via the `attobot.config_public` view — `service` is the subconscious's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
-| 4 | `attotools.blobs` | agent_subconscious | **denied** — the blobs policy is `TO anonymous, authenticated`, and the subconscious is only a member of `service`. |
+| 2 | `config` | service | **non-secret only**, via the `attobot.config_public` view — `service` is the subconscious's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
 
 `attobot_dashboard` is `BYPASSRLS` with `SELECT`/`EXECUTE` only; it reads secret
 `config` rows but the dashboard API redacts them server-side.

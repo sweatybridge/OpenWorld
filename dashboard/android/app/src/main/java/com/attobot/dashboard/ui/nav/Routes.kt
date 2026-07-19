@@ -15,7 +15,6 @@ object Routes {
     const val MEMORY = "memory?agentId={agentId}"
     const val USERS = "users"
     const val CONFIG = "config?agentId={agentId}"
-    const val BLOBS = "blobs?agentId={agentId}"
     const val WORKFLOW_DETAIL = "workflow_detail/{id}"
     const val TRACE = "trace/{messageId}"
     const val SETTINGS = "settings"
@@ -38,7 +37,7 @@ object Routes {
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 }
 
-/** Drawer items in display order (Overview … Blobs). */
+/** Drawer items in display order. */
 data class DrawerItem(val route: String, val icon: String, val label: String)
 
 val DRAWER_ITEMS: List<DrawerItem> = listOf(
@@ -49,5 +48,4 @@ val DRAWER_ITEMS: List<DrawerItem> = listOf(
     DrawerItem("memory", "🧠", "Memory"),
     DrawerItem(Routes.USERS, "👥", "Users"),
     DrawerItem("config", "⚙️", "Config"),
-    DrawerItem("blobs", "📗", "Blobs"),
 )
