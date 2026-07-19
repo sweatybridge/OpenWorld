@@ -95,6 +95,12 @@ private struct MessageBubble: View {
         let border = Self.roleBorder[message.role] ?? Theme.border
         let payload = message.payload ?? .null
         let toolCalls = extractToolCalls(payload)
+        // Reasoning models (o-series, deepseek-r1, qwen-thinking, …) put their
+        // chain-of-thought in `reasoning_content` and leave `content` empty. The
+        // raw LLM message — reasoning_content included — is stored verbatim at
+        // payload.raw, so fall back to it when the visible reply is blank instead
+        // of showing an empty bubble.
+        let reasoning = payload["raw"]?["reasoning_content"]?.string ?? ""
 
         VStack(alignment: .leading, spacing: 4) {
             // Meta row
@@ -125,6 +131,16 @@ private struct MessageBubble: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if !reasoning.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("REASONING")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                    Text(reasoning)
+                        .font(.system(size: 13).italic())
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if !toolCalls.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
