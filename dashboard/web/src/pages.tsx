@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ConfigRow, type TraceRow } from "./api";
+import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ToolCall, type ConfigRow, type TraceRow } from "./api";
 import { messageIdFromLabel } from "./label";
 import {
   Card, Column, DataTable, EmptyState, ErrorState, JsonText, JsonView, NodeTree,
@@ -437,17 +437,6 @@ export function MessagesPage() {
   );
 }
 
-type ToolCall = {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: {
-      query: string;
-    };
-  };
-};
-
 function MessageBubble({ m }: { m: MessageRow }) {
   const payload = m.payload as Record<string, unknown> | null;
   const toolCalls = Array.isArray(payload?.tool_calls) ? (payload!.tool_calls as Array<ToolCall>) : [];
@@ -478,7 +467,7 @@ function MessageBubble({ m }: { m: MessageRow }) {
       {toolCalls.length > 0 && (
         <ul className="tool-calls">
           {toolCalls.map(({ function: fn }, i) => (
-            <li key={i}><code>{String(fn.name ?? "")}</code> <JsonView value={fn.arguments ?? {}} /></li>
+            <li key={i}><details className="node-result"><summary>{fn.name}</summary><JsonText value={fn.arguments} /></details></li>
           ))}
         </ul>
       )}

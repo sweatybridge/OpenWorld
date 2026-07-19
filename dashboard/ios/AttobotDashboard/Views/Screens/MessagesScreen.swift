@@ -149,7 +149,7 @@ private struct MessageBubble: View {
                             Text(tc.name ?? "")
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(Theme.accent)
-                            JsonView(value: tc.arguments ?? tc.args ?? .null)
+                            JsonView(value: tc.arguments ?? .null)
                         }
                         .padding(.leading, 4)
                     }
@@ -193,14 +193,16 @@ private struct MessageBubble: View {
     private struct ToolCall {
         let name: String?
         let arguments: JSONValue?
-        let args: JSONValue?
     }
 
     private func extractToolCalls(_ payload: JSONValue) -> [ToolCall] {
         guard let obj = payload.objectValue, let arr = obj["tool_calls"]?.arrayValue else { return [] }
         return arr.compactMap { item in
-            guard let o = item.objectValue else { return nil }
-            return ToolCall(name: o["name"]?.string, arguments: o["arguments"], args: o["args"])
+            // OpenAI shape: each call is { id, type, function: { name, arguments } },
+            // so name and arguments live one level down under `function` (mirrors
+            // the web ToolCall interface).
+            guard let function = item["function"] else { return nil }
+            return ToolCall(name: function["name"]?.string, arguments: function["arguments"])
         }
     }
 

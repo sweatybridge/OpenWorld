@@ -119,6 +119,10 @@ export interface MessageRow {
   channel: string | null; chat_id: string | null; tool_call_id: string | null;
   created_at: string;
 }
+export interface ToolCall {
+  id: string; type: "function";
+  function: { name: string; arguments: unknown };
+}
 export interface ConfigRow {
   agent_id: number; key: string; value: unknown; secret: boolean; updated_at: string;
 }

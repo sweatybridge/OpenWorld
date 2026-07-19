@@ -224,15 +224,19 @@ private fun MessageBubble(m: MessageRow, onTrace: (Long) -> Unit) {
                 if (toolCalls.isNotEmpty()) {
                     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         toolCalls.forEach { tc ->
+                            // OpenAI shape: each call is { id, type, function: { name, arguments } },
+                            // so name and arguments live one level down under `function` (mirrors
+                            // the web ToolCall interface).
+                            val function = tc["function"] as? JsonObject
                             Column(Modifier.padding(start = 4.dp)) {
                                 Text(
-                                    (tc["name"] as? JsonPrimitive)?.content ?: "",
+                                    (function?.get("name") as? JsonPrimitive)?.content ?: "",
                                     color = accent,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     modifier = Modifier.padding(bottom = 2.dp),
                                 )
-                                JsonView(tc["arguments"] ?: tc["args"])
+                                JsonView(function?.get("arguments"))
                             }
                         }
                     }
