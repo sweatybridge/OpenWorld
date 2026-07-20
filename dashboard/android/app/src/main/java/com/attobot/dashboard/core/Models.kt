@@ -182,6 +182,24 @@ data class ConfigRow(
     @SerialName("updated_at") val updatedAt: String? = null,
 )
 
+// ---------------- Indexes ----------------
+
+/** One row of pg_index (a database index). Count/size fields arrive as strings
+ * (bigint over the wire); indexType is the pg_am name (btree/hnsw/ivfflat/…). */
+@Serializable
+data class IndexRow(
+    @SerialName("schema_name") val schemaName: String,
+    @SerialName("table_name") val tableName: String,
+    @SerialName("index_name") val indexName: String,
+    @SerialName("index_type") val indexType: String,
+    @SerialName("is_unique") val isUnique: Boolean,
+    @SerialName("is_primary") val isPrimary: Boolean,
+    val size: String,
+    val scans: String,
+    @SerialName("tuples_read") val tuplesRead: String,
+    val definition: String,
+)
+
 // ---------------- Response wrappers ----------------
 
 @Serializable
@@ -198,6 +216,9 @@ data class UsersResponse(val rows: List<UserRow> = emptyList())
 
 @Serializable
 data class ConfigResponse(val rows: List<ConfigRow> = emptyList())
+
+@Serializable
+data class IndexesResponse(val rows: List<IndexRow> = emptyList())
 
 // ---------------- Arbitrary-JSON helpers ----------------
 

@@ -94,6 +94,21 @@ export interface ConfigRow {
   updated_at: string;
 }
 
+// One row of pg_index: a database index across the attobot / df / extension
+// schemas. Counts and sizes arrive as strings (bigint via node-postgres).
+export interface IndexRow {
+  schema_name: string;
+  table_name: string;
+  index_name: string;
+  index_type: string; // amname: btree | hash | gin | gist | brin | spgist | hnsw | ivfflat | …
+  is_unique: boolean;
+  is_primary: boolean;
+  size: string; // pg_size_pretty(pg_relation_size)
+  scans: string; // pg_stat_user_indexes.idx_scan
+  tuples_read: string; // pg_stat_user_indexes.idx_tup_read
+  definition: string; // pg_get_indexdef
+}
+
 export interface OverviewResponse {
   metrics: Record<string, unknown> | null;
   worker: { started_at: string | null; last_seen_at: string | null; age_seconds: number | null } | null;

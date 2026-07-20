@@ -2,6 +2,7 @@ import { query } from "./db.js";
 import type {
   AgentRow,
   ConfigRow,
+  IndexRow,
   InstanceNode,
   MessageRow,
   OverviewResponse,
@@ -244,6 +245,41 @@ export async function listConfig(agentId: number | null): Promise<ConfigRow[]> {
      WHERE ($1::bigint IS NULL OR agent_id = $1)
      ORDER BY agent_id, key`,
     [agentId]
+  );
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Indexes
+// ---------------------------------------------------------------------------
+
+// All indexes across the non-system schemas (attobot, attotools, df, ffmpeg,
+// ssh, public, …). pg_catalog is readable by any role, so the dashboard role
+// needs no extra grant. pg_stat_user_indexes is NULL for indexes the stats
+// collector hasn't touched yet, hence the COALESCE. Sized desc so the heaviest
+// (and usually most interesting) indexes surface first; pgvector's hnsw/ivfflat
+// indexes show up here with index_type once a vector column is indexed.
+export async function listIndexes(): Promise<IndexRow[]> {
+  const { rows } = await query<IndexRow>(
+    `SELECT n.nspname  AS schema_name,
+            tbl.relname AS table_name,
+            idx.relname AS index_name,
+            am.amname   AS index_type,
+            x.indisunique  AS is_unique,
+            x.indisprimary AS is_primary,
+            pg_size_pretty(pg_relation_size(idx.oid)) AS size,
+            COALESCE(s.idx_scan, 0)::bigint::text     AS scans,
+            COALESCE(s.idx_tup_read, 0)::bigint::text AS tuples_read,
+            pg_get_indexdef(idx.oid) AS definition
+     FROM pg_index x
+     JOIN pg_class idx ON idx.oid = x.indexrelid
+     JOIN pg_class tbl ON tbl.oid = x.indrelid
+     JOIN pg_namespace n ON n.oid = idx.relnamespace
+     JOIN pg_am am ON am.oid = idx.relam
+     LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = idx.oid
+     WHERE n.nspname NOT LIKE 'pg\\_%'
+       AND n.nspname <> 'information_schema'
+     ORDER BY pg_relation_size(idx.oid) DESC, n.nspname, tbl.relname, idx.relname`
   );
   return rows;
 }

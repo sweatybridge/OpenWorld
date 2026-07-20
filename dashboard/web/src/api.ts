@@ -126,3 +126,17 @@ export interface ToolCall {
 export interface ConfigRow {
   agent_id: number; key: string; value: unknown; secret: boolean; updated_at: string;
 }
+
+// One row of pg_index (see server IndexRow). Counts/sizes arrive as strings.
+export interface IndexRow {
+  schema_name: string;
+  table_name: string;
+  index_name: string;
+  index_type: string;
+  is_unique: boolean;
+  is_primary: boolean;
+  size: string;
+  scans: string;
+  tuples_read: string;
+  definition: string;
+}

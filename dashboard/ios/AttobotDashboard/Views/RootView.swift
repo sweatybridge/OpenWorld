@@ -10,6 +10,7 @@ enum Route: Hashable {
     case memory(agentId: String? = nil)
     case users
     case config(agentId: String? = nil)
+    case indexes
     case workflowDetail(id: String)
     case trace(messageId: Int)
 }
@@ -86,6 +87,8 @@ struct RootView: View {
             UsersScreen()
         case .config(let agentId):
             ConfigScreen(initialAgentId: agentId)
+        case .indexes:
+            IndexesScreen()
         case .workflowDetail(let id):
             WorkflowDetailScreen(id: id)
         case .trace(let messageId):

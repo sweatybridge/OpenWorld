@@ -7,6 +7,7 @@ import com.attobot.dashboard.core.AgentRow
 import com.attobot.dashboard.core.ApiProvider
 import com.attobot.dashboard.core.AuthException
 import com.attobot.dashboard.core.ConfigRow
+import com.attobot.dashboard.core.IndexRow
 import com.attobot.dashboard.core.MemoryRow
 import com.attobot.dashboard.core.Overview
 import com.attobot.dashboard.core.TraceRow
@@ -242,6 +243,19 @@ class ConfigViewModel : AgentFilteredViewModel<List<ConfigRow>>(poll = false) {
 
 class UsersViewModel : PollingViewModel<List<UserRow>>(poll = false) {
     override suspend fun fetch(): List<UserRow> = ApiProvider.users()
+}
+
+/**
+ * Indexes — fetches all non-system indexes once; the schema filter is applied
+ * client-side (derived from the fetched rows), so changing it does not refetch.
+ */
+class IndexesViewModel : PollingViewModel<List<IndexRow>>(poll = false) {
+    private val _schema = MutableStateFlow("")
+    val schema: StateFlow<String> = _schema.asStateFlow()
+
+    fun setSchema(v: String) { _schema.value = v }
+
+    override suspend fun fetch(): List<IndexRow> = ApiProvider.indexes()
 }
 
 // ---- Shared agents cache for AgentPills ------------------------------------

@@ -264,6 +264,35 @@ struct ConfigRow: Codable, Hashable {
     }
 }
 
+// MARK: - Indexes
+
+/// One row of pg_index (a database index). Count/size fields arrive as strings
+/// (bigint via the wire). index_type is the pg_am name (btree/hnsw/ivfflat/…).
+struct IndexRow: Codable, Hashable {
+    var schemaName: String
+    var tableName: String
+    var indexName: String
+    var indexType: String
+    var isUnique: Bool
+    var isPrimary: Bool
+    var size: String
+    var scans: String
+    var tuplesRead: String
+    var definition: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaName = "schema_name"
+        case tableName = "table_name"
+        case indexName = "index_name"
+        case indexType = "index_type"
+        case isUnique = "is_unique"
+        case isPrimary = "is_primary"
+        case size, scans
+        case tuplesRead = "tuples_read"
+        case definition
+    }
+}
+
 // MARK: - Generic list wrapper
 
 struct RowList<T: Decodable>: Decodable {

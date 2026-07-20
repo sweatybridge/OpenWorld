@@ -10,6 +10,7 @@ import {
   listAgentMessages,
   listAgents,
   listConfig,
+  listIndexes,
   listMemory,
   listUsers,
   listWorkflows,
@@ -107,6 +108,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/users", async () => ({ rows: await listUsers() }));
+
+  app.get("/api/indexes", async () => ({ rows: await listIndexes() }));
 
   app.get("/api/config", async (req) => {
     const q = req.query as Record<string, string | undefined>;

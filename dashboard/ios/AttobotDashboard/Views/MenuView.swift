@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The drawer-as-List: brand header, 9 navigation items, footer with Settings
+/// The drawer-as-List: brand header, 8 navigation items, footer with Settings
 /// (sheet) + Clear token (wipe + reload). This is the NavigationStack root.
 struct MenuView: View {
     let gate: GateModel
@@ -21,6 +21,7 @@ struct MenuView: View {
         Item(route: .memory(), icon: "🧠", label: "Memory"),
         Item(route: .users, icon: "👥", label: "Users"),
         Item(route: .config(), icon: "⚙️", label: "Config"),
+        Item(route: .indexes, icon: "📇", label: "Indexes"),
     ]
 
     var body: some View {

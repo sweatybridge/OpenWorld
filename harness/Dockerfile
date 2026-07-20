@@ -1,4 +1,4 @@
-FROM postgres:18-trixie AS harness
+FROM pgvector/pgvector:pg18-trixie AS harness
 
 ARG TARGETARCH=amd64
 

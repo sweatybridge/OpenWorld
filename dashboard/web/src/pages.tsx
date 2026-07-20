@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ToolCall, type ConfigRow, type TraceRow } from "./api";
+import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ToolCall, type ConfigRow, type IndexRow, type TraceRow } from "./api";
 import { messageIdFromLabel } from "./label";
 import {
   Card, Column, DataTable, EmptyState, ErrorState, JsonText, JsonView, NodeTree,
@@ -571,6 +571,73 @@ export function ConfigPage() {
           ]}
         />
       )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- indexes
+
+// Database indexes across all non-system schemas (attobot, attotools, df, …).
+// Surfaces type/size/usage per index; pgvector's hnsw/ivfflat indexes show up
+// here once vector columns are indexed. pg_catalog is readable by any role, so
+// the dashboard role needs no extra grant.
+export function IndexesPage() {
+  const [params, setParams] = useSearchParams();
+  const schema = params.get("schema") ?? "";
+  const query = useQuery({
+    queryKey: ["indexes"],
+    queryFn: () => apiGet<{ rows: IndexRow[] }>("/api/indexes").then((r) => r.rows),
+  });
+
+  if (query.isLoading) return <Spinner />;
+  if (query.error) return <ErrorState message={(query.error as Error).message} />;
+
+  const all = query.data ?? [];
+  // Schema options come from the full result so the dropdown never shrinks to
+  // just the selected schema.
+  const schemas = Array.from(new Set(all.map((r) => r.schema_name))).sort();
+  const rows = schema ? all.filter((r) => r.schema_name === schema) : all;
+
+  const set = (k: string, v: string) => {
+    const next = new URLSearchParams(params);
+    if (v) next.set(k, v); else next.delete(k);
+    setParams(next);
+  };
+
+  return (
+    <>
+      <h1>Indexes</h1>
+      <div className="filters">
+        <select value={schema} onChange={(e) => set("schema", e.target.value)}>
+          <option value="">all schemas</option>
+          {schemas.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <span className="hint">{rows.length} index{rows.length === 1 ? "" : "es"}</span>
+      </div>
+      <DataTable
+        rows={rows}
+        columns={[
+          { key: "schema", header: "schema", cell: (r) => <code>{r.schema_name}</code> },
+          { key: "table", header: "table", cell: (r) => <code>{r.table_name}</code> },
+          { key: "index", header: "index", cell: (r) => <code>{r.index_name}</code> },
+          { key: "type", header: "type", cell: (r) => <TypePill type={r.index_type} /> },
+          { key: "flags", header: "flags", cell: (r) => (
+            <>
+              {r.is_primary && <span className="pill">PK</span>}
+              {!r.is_primary && r.is_unique && <span className="pill">UNIQUE</span>}
+            </>
+          ) },
+          { key: "size", header: "size", cell: (r) => r.size },
+          { key: "scans", header: "scans", cell: (r) => r.scans },
+          { key: "tuples", header: "tuples read", cell: (r) => r.tuples_read },
+          { key: "def", header: "definition", cell: (r) => (
+            <details className="node-result">
+              <summary><code>{truncate(r.definition.replace(/\s+/g, " "), 80)}</code></summary>
+              <pre>{r.definition}</pre>
+            </details>
+          ) },
+        ]}
+      />
     </>
   );
 }
