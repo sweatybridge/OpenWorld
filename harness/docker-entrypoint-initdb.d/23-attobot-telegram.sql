@@ -257,6 +257,13 @@ $$;
 -- result); an attachment is uploaded here via curl (sendPhoto/sendAudio/
 -- sendVideo/sendDocument, chosen by the kind queued with the attachment).
 --
+-- On a Telegram API error (non-2xx, or ok:false on the text path) it RAISEs,
+-- which fails the send instance — pg_durable has no df.fail, so an unhandled
+-- exception in a node is what marks the workflow failed. df.http treats a 4xx
+-- response as success (not a failure), so a rejected sendMessage only surfaces
+-- here; raising makes a failed send visible as a failed instance instead of a
+-- silent completed one.
+--
 -- SELF-BINDS the agent GUC: the send instance runs in its own transaction,
 -- separate from the outbound trigger whose is_local bind does not survive into
 -- here, so the agent-scoped reads (messages/config) resolve under RLS. The slug
@@ -295,11 +302,18 @@ DECLARE
 BEGIN
   PERFORM set_config('attobot.current_agent_id', v_agent_id::text, true);
 
-  -- Text reply: df.http already delivered it upstream; return the parsed status.
-  -- (p_http_response non-NULL is the text-path signal; attachments omit it.)
+  -- Text reply: df.http already delivered it upstream. Parse the status and fail
+  -- the instance when Telegram rejected it (see the function header). The ok
+  -- flag is checked too because Telegram errors carry ok:false. (p_http_response
+  -- non-NULL is the text-path signal; attachments omit it.)
   IF p_http_response IS NOT NULL THEN
     v_status := attobot._http_status(p_http_response);
-    RETURN jsonb_build_object('sent', v_status >= 200 AND v_status < 300, 'status', v_status);
+    IF v_status < 200 OR v_status >= 299
+       OR coalesce((attobot._http_body_json(p_http_response)->>'ok')::boolean, false) IS NOT TRUE THEN
+      RAISE EXCEPTION 'telegram sendMessage failed: http_status=% body=%',
+        v_status, left(coalesce(p_http_response->>'body', ''), 500);
+    END IF;
+    RETURN jsonb_build_object('sent', true, 'status', v_status);
   END IF;
 
   -- Attachment via curl multipart. The media bytes and detected kind were queued
@@ -356,7 +370,13 @@ BEGIN
   BEGIN IF v_oid IS NOT NULL THEN PERFORM lo_unlink(v_oid); END IF; EXCEPTION WHEN others THEN NULL; END;
   BEGIN PERFORM attobot._program_output('rm -f -- ' || attobot._shell_quote(v_path)); EXCEPTION WHEN others THEN NULL; END;
 
-  RETURN jsonb_build_object('sent', v_status >= 200 AND v_status < 300, 'status', v_status);
+  -- Fail the instance when Telegram rejected the upload (see the text path and
+  -- the function header). v_response_text holds curl's body or its error.
+  IF v_status < 200 OR v_status >= 299 THEN
+    RAISE EXCEPTION 'telegram % failed: http_status=% body=%',
+      v_method, v_status, left(coalesce(v_response_text, ''), 500);
+  END IF;
+  RETURN jsonb_build_object('sent', true, 'status', v_status);
 END;
 $$;
 
