@@ -121,6 +121,7 @@ AS $$
         WHEN ty.typname IN ('int2', 'int4', 'int8')        THEN jsonb_build_object('type', 'integer')
         WHEN ty.typname = 'bool'                           THEN jsonb_build_object('type', 'boolean')
         WHEN ty.typname IN ('float4', 'float8', 'numeric') THEN jsonb_build_object('type', 'number')
+        WHEN ty.typname IN ('jsonb', 'json')               THEN jsonb_build_object('type', 'object')
         ELSE jsonb_build_object('type', 'string')
       END AS schema
     FROM tools t

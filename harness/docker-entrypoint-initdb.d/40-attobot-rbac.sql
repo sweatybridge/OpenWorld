@@ -319,6 +319,21 @@ GRANT SELECT ON ALL TABLES IN SCHEMA ffmpeg
   TO attobot_anonymous, attobot_authenticated, attobot_service,
      attobot_agent_primary, attobot_agent_subconscious;
 
+-- Acting roles CREATE HLS playlists via ffmpeg.hls(url, segment_duration) in
+-- the SQL tool — that returned playlist_id is what send_photo/send_video/
+-- send_audio key off. ffmpeg.hls is SECURITY INVOKER and INSERTs into
+-- ffmpeg.hls_playlists / ffmpeg.hls_segments (and nextval's their id
+-- sequences), so those roles need INSERT on the two tables and USAGE on the
+-- sequences. The tables are scratch media storage (no RLS, no sensitive
+-- data); GRANT ... ON ALL TABLES above only granted SELECT, so this is
+-- scoped to just the hls pair.
+GRANT INSERT ON ffmpeg.hls_playlists, ffmpeg.hls_segments
+  TO attobot_anonymous, attobot_authenticated, attobot_service,
+     attobot_agent_primary, attobot_agent_subconscious;
+GRANT USAGE, SELECT ON SEQUENCE ffmpeg.hls_playlists_id_seq, ffmpeg.hls_segments_id_seq
+  TO attobot_anonymous, attobot_authenticated, attobot_service,
+     attobot_agent_primary, attobot_agent_subconscious;
+
 -- TODO: move this function to attotools or telegram schema
 GRANT EXECUTE ON FUNCTION attobot.queue_outbound_attachment(text, text, text, text, text, text, text)
   TO attobot_anonymous, attobot_authenticated;

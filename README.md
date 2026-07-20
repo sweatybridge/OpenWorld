@@ -92,7 +92,14 @@ The LLM sees these database-native tools (schemas are introsducted from the
 - `SEARCH`: search the public web and return titles, URLs, and snippets.
 - `WEBFETCH`: fetch a public HTTP(S) URL and return status, content type, and a truncated text body.
 - `BASH`: run a shell command on a registered remote host over SSH. `host` is optional and defaults to the first registered host when omitted.
-- `SEND_ATTACHMENT`: send media (image/audio/video) as a Telegram attachment.
+- `SEND_PHOTO` / `SEND_VIDEO` / `SEND_AUDIO`: send a photo / video / audio as a
+  Telegram attachment derived from an HLS playlist. First create the playlist
+  with `SELECT ffmpeg.hls(url, segment_duration)` (SQL tool), then pass the
+  returned `playlist_id` here along with an ffmpeg `transform` (e.g.
+  `thumbnail`, `transcode`, `trim`, `extract_audio`) and an `options` object.
+  Media bytes are produced server-side and never enter the model context.
+- `SEND_ATTACHMENT`: send media (image/audio/video) you already hold as inline
+  bytes (base64/hex + encoding) as a Telegram attachment; kind is auto-detected.
 - `SQL`: run a single SQL query that returns rows.
 
 `BASH` uses the `pg_ssh` extension's `ssh.exec(host_name, command)` function.

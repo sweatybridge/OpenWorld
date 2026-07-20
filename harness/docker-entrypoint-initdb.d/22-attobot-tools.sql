@@ -143,6 +143,268 @@ END;
 $$;
 COMMENT ON FUNCTION attotools._tool_send_attachment(text, text, text, text, text) IS 'Send media (image/audio/video) as a Telegram attachment. Pass the raw content with an encoding (base64, hex, escape, or a text encoding like UTF8). The kind is auto-detected from mime_type/filename, falling back to ffmpeg.media_info: photos use sendPhoto, audio sendAudio, video sendVideo, anything else sendDocument.';
 
+-- Reconstruct one continuous media blob from the HLS segments stored for a
+-- playlist (created by ffmpeg.hls(url, segment_duration), which returns the
+-- playlist_id). ffmpeg.concat stream-copies the segments back together in
+-- segment_index order; segments from a single hls() call share codec/
+-- dimensions so they are concat-compatible. The send_photo/send_video/
+-- send_audio tools key off this id so the media bytes are produced and
+-- consumed server-side and never flow through the LLM's arguments or results.
+CREATE OR REPLACE FUNCTION attotools._hls_media(p_playlist_id bigint)
+RETURNS bytea
+LANGUAGE plpgsql
+SET search_path = attobot, attotools, pg_temp
+AS $$
+DECLARE
+  v_bytes bytea;
+BEGIN
+  IF p_playlist_id IS NULL THEN
+    RAISE EXCEPTION 'playlist_id is required';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM ffmpeg.hls_segments WHERE playlist_id = p_playlist_id) THEN
+    RAISE EXCEPTION 'no HLS segments found for playlist_id %', p_playlist_id
+      USING HINT = 'create one with: SELECT ffmpeg.hls(url, segment_duration)';
+  END IF;
+
+  SELECT ffmpeg.concat(array_agg(data ORDER BY segment_index)) INTO v_bytes
+  FROM ffmpeg.hls_segments WHERE playlist_id = p_playlist_id;
+
+  IF v_bytes IS NULL THEN
+    RAISE EXCEPTION 'could not reconstruct media for playlist_id %', p_playlist_id;
+  END IF;
+
+  RETURN v_bytes;
+END;
+$$;
+
+-- Shared tail of the three send_* tools: resolve the acting agent's slug +
+-- chat_id from its most recent user message, queue the (already-produced)
+-- bytes as the FORCED kind (photo/video/audio — chosen by which tool was
+-- called, not by detection), and return a small result. detected runs
+-- _attachment_kind on the actual bytes for the result only — it does NOT
+-- override the forced kind — so the model can see a mismatch (e.g. a
+-- send_video of an audio-only transform) without the routing changing.
+-- bytes never leave this call as text: queue_outbound_attachment base64-
+-- encodes them into the message payload, and the returned JSON carries only
+-- lengths and labels.
+CREATE OR REPLACE FUNCTION attotools._queue_send(
+  p_kind text,
+  p_bytes bytea,
+  p_transform text,
+  p_filename text,
+  p_caption text,
+  p_mime_type text
+)
+RETURNS text
+LANGUAGE plpgsql
+SET search_path = attobot, attotools, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := nullif(current_setting('attobot.current_agent_id', true), '')::bigint;
+  v_detected text;
+  v_slug text;
+  v_chat_id text;
+BEGIN
+  IF v_agent_id IS NULL THEN
+    RAISE EXCEPTION 'send tool has no current agent context';
+  END IF;
+  IF p_bytes IS NULL OR length(p_bytes) = 0 THEN
+    RAISE EXCEPTION 'send tool produced no media bytes';
+  END IF;
+
+  v_detected := attotools._attachment_kind(p_bytes, p_mime_type, p_filename);
+
+  SELECT a.slug, m.chat_id INTO v_slug, v_chat_id
+  FROM attobot.messages m JOIN attobot.agents a ON a.id = m.agent_id
+  WHERE m.agent_id = v_agent_id AND m.role = 'user'
+  ORDER BY m.id DESC LIMIT 1;
+
+  PERFORM attobot.queue_outbound_attachment(
+    v_slug,
+    encode(p_bytes, 'base64'),
+    p_kind,
+    nullif(p_filename, ''),
+    nullif(p_caption, ''),
+    nullif(p_mime_type, ''),
+    v_chat_id
+  );
+
+  RETURN jsonb_build_object(
+    'queued', true,
+    'kind', p_kind,
+    'detected', v_detected,
+    'bytes', length(p_bytes),
+    'transform', nullif(p_transform, '')
+  )::text;
+END;
+$$;
+
+-- Helper: read an optional numeric/text field from a (possibly NULL) jsonb
+-- options bag. p_key absent or p_options NULL -> p_default; otherwise cast.
+-- A malformed value raises, which run_tool_call_as_role turns into an
+-- 'error: ...' tool result (the model sees it and can retry with valid opts).
+CREATE OR REPLACE FUNCTION attotools._opt_int(p_options jsonb, p_key text, p_default integer)
+RETURNS integer
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(nullif(p_options ->> p_key, '')::integer, p_default)
+$$;
+CREATE OR REPLACE FUNCTION attotools._opt_float(p_options jsonb, p_key text, p_default double precision)
+RETURNS double precision
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(nullif(p_options ->> p_key, '')::float8, p_default)
+$$;
+CREATE OR REPLACE FUNCTION attotools._opt_bool(p_options jsonb, p_key text, p_default boolean)
+RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(nullif(p_options ->> p_key, '')::boolean, p_default)
+$$;
+CREATE OR REPLACE FUNCTION attotools._opt_text(p_options jsonb, p_key text, p_default text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(nullif(p_options ->> p_key, ''), p_default)
+$$;
+
+-- SEND_PHOTO: reconstruct media from an HLS playlist, apply an image-producing
+-- ffmpeg transform, and queue as a photo (sendPhoto). transform 'thumbnail'
+-- (default) grabs a video frame; 'waveform' renders an audio waveform image.
+-- options (jsonb): thumbnail -> {seconds, format}; waveform ->
+-- {width, height, format, mode}.
+CREATE OR REPLACE FUNCTION attotools._tool_send_photo(
+  p_playlist_id bigint,
+  p_transform text DEFAULT 'thumbnail',
+  p_options jsonb DEFAULT NULL,
+  p_filename text DEFAULT '',
+  p_caption text DEFAULT '',
+  p_mime_type text DEFAULT ''
+)
+RETURNS text
+LANGUAGE plpgsql
+SET search_path = attobot, attotools, ffmpeg, pg_temp
+AS $$
+DECLARE
+  v_media bytea := attotools._hls_media(p_playlist_id);
+  v_t text := lower(btrim(coalesce(p_transform, 'thumbnail')));
+  v_out bytea;
+BEGIN
+  IF v_t IN ('', 'thumbnail') THEN
+    v_out := ffmpeg.thumbnail(
+      v_media,
+      attotools._opt_float(p_options, 'seconds', 0.0),
+      attotools._opt_text(p_options, 'format', 'png'));
+  ELSIF v_t = 'waveform' THEN
+    v_out := ffmpeg.waveform(
+      v_media,
+      attotools._opt_int(p_options, 'width', 800),
+      attotools._opt_int(p_options, 'height', 200),
+      attotools._opt_text(p_options, 'format', 'png'),
+      attotools._opt_text(p_options, 'mode', 'waveform'));
+  ELSE
+    RAISE EXCEPTION 'unknown photo transform "%"; use thumbnail or waveform', v_t;
+  END IF;
+
+  RETURN attotools._queue_send('photo', v_out, v_t, p_filename, p_caption, p_mime_type);
+END;
+$$;
+COMMENT ON FUNCTION attotools._tool_send_photo(bigint, text, jsonb, text, text, text) IS 'Send a photo (Telegram sendPhoto) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg image op: "thumbnail" (default; grab a video frame — options: seconds, format png|jpeg) or "waveform" (render an audio waveform — options: width, height, format, mode). The frame/waveform is produced server-side; the model only handles the playlist_id.';
+
+-- SEND_VIDEO: reconstruct media from an HLS playlist, optionally transform,
+-- and queue as a video (sendVideo). transform '' / 'raw' (default) sends the
+-- reconstructed media as-is; 'transcode' re-encodes; 'trim' cuts a sub-range.
+CREATE OR REPLACE FUNCTION attotools._tool_send_video(
+  p_playlist_id bigint,
+  p_transform text DEFAULT '',
+  p_options jsonb DEFAULT NULL,
+  p_filename text DEFAULT '',
+  p_caption text DEFAULT '',
+  p_mime_type text DEFAULT ''
+)
+RETURNS text
+LANGUAGE plpgsql
+SET search_path = attobot, attotools, ffmpeg, pg_temp
+AS $$
+DECLARE
+  v_media bytea := attotools._hls_media(p_playlist_id);
+  v_t text := lower(btrim(coalesce(p_transform, '')));
+  v_out bytea;
+BEGIN
+  IF v_t IN ('', 'raw') THEN
+    v_out := v_media;
+  ELSIF v_t = 'transcode' THEN
+    v_out := ffmpeg.transcode(
+      v_media,
+      format       := nullif(p_options ->> 'format', ''),
+      filter       := nullif(p_options ->> 'filter', ''),
+      codec        := nullif(p_options ->> 'codec', ''),
+      preset       := nullif(p_options ->> 'preset', ''),
+      crf          := nullif(p_options ->> 'crf', '')::integer,
+      bitrate      := nullif(p_options ->> 'bitrate', '')::integer,
+      audio_codec  := nullif(p_options ->> 'audio_codec', ''),
+      audio_filter := nullif(p_options ->> 'audio_filter', ''),
+      audio_bitrate:= nullif(p_options ->> 'audio_bitrate', '')::integer,
+      hwaccel      := attotools._opt_bool(p_options, 'hwaccel', false));
+  ELSIF v_t = 'trim' THEN
+    v_out := ffmpeg.trim(
+      v_media,
+      attotools._opt_float(p_options, 'start_time', 0.0),
+      nullif(p_options ->> 'end_time', '')::float8,
+      attotools._opt_bool(p_options, 'precise', false));
+  ELSE
+    RAISE EXCEPTION 'unknown video transform "%"; use raw, transcode, or trim', v_t;
+  END IF;
+
+  RETURN attotools._queue_send('video', v_out, v_t, p_filename, p_caption, p_mime_type);
+END;
+$$;
+COMMENT ON FUNCTION attotools._tool_send_video(bigint, text, jsonb, text, text, text) IS 'Send a video (Telegram sendVideo) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg op: "raw"/"" (default; send reconstructed media as-is), "transcode" (re-encode — options: format, filter, codec, preset, crf, bitrate, audio_codec, audio_filter, audio_bitrate, hwaccel), or "trim" (cut a sub-range — options: start_time, end_time, precise). Produced server-side; the model only handles the playlist_id.';
+
+-- SEND_AUDIO: reconstruct media from an HLS playlist, extract its audio, and
+-- queue as audio (sendAudio). transform 'extract_audio' (default) pulls the
+-- audio track; giving start_time/end_time additionally trims the extracted
+-- audio to that range. options: format, codec, bitrate, sample_rate, channels,
+-- filter (+ start_time/end_time/precise for the optional trim).
+CREATE OR REPLACE FUNCTION attotools._tool_send_audio(
+  p_playlist_id bigint,
+  p_transform text DEFAULT 'extract_audio',
+  p_options jsonb DEFAULT NULL,
+  p_filename text DEFAULT '',
+  p_caption text DEFAULT '',
+  p_mime_type text DEFAULT ''
+)
+RETURNS text
+LANGUAGE plpgsql
+SET search_path = attobot, attotools, ffmpeg, pg_temp
+AS $$
+DECLARE
+  v_media bytea := attotools._hls_media(p_playlist_id);
+  v_t text := lower(btrim(coalesce(p_transform, 'extract_audio')));
+  v_out bytea;
+BEGIN
+  IF v_t IN ('', 'extract_audio') THEN
+    v_out := ffmpeg.extract_audio(
+      v_media,
+      format      := nullif(p_options ->> 'format', ''),
+      codec       := nullif(p_options ->> 'codec', ''),
+      bitrate     := nullif(p_options ->> 'bitrate', '')::integer,
+      sample_rate := nullif(p_options ->> 'sample_rate', '')::integer,
+      channels    := nullif(p_options ->> 'channels', '')::integer,
+      filter      := nullif(p_options ->> 'filter', ''));
+    IF p_options ? 'start_time' OR p_options ? 'end_time' THEN
+      v_out := ffmpeg.trim(
+        v_out,
+        attotools._opt_float(p_options, 'start_time', 0.0),
+        nullif(p_options ->> 'end_time', '')::float8,
+        attotools._opt_bool(p_options, 'precise', false));
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'unknown audio transform "%"; use extract_audio', v_t;
+  END IF;
+
+  RETURN attotools._queue_send('audio', v_out, v_t, p_filename, p_caption, p_mime_type);
+END;
+$$;
+COMMENT ON FUNCTION attotools._tool_send_audio(bigint, text, jsonb, text, text, text) IS 'Send audio (Telegram sendAudio) extracted from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform "extract_audio" (default) pulls the audio track (options: format, codec, bitrate, sample_rate, channels, filter); set start_time/end_time to additionally trim the extracted audio (precise for frame accuracy). Produced server-side; the model only handles the playlist_id.';
+
 CREATE OR REPLACE FUNCTION attotools._decode_content(
   p_content text,
   p_encoding text
@@ -658,6 +920,27 @@ BEGIN
       WHEN 'SEND_ATTACHMENT' THEN attotools._tool_send_attachment(
             coalesce(p_args->>'content', ''),
             coalesce(p_args->>'encoding', ''),
+            coalesce(p_args->>'filename', ''),
+            coalesce(p_args->>'caption', ''),
+            coalesce(p_args->>'mime_type', ''))
+      WHEN 'SEND_PHOTO' THEN attotools._tool_send_photo(
+            nullif(p_args->>'playlist_id', '')::bigint,
+            coalesce(p_args->>'transform', 'thumbnail'),
+            attobot._try_jsonb(coalesce(p_args->>'options', '')),
+            coalesce(p_args->>'filename', ''),
+            coalesce(p_args->>'caption', ''),
+            coalesce(p_args->>'mime_type', ''))
+      WHEN 'SEND_VIDEO' THEN attotools._tool_send_video(
+            nullif(p_args->>'playlist_id', '')::bigint,
+            coalesce(p_args->>'transform', ''),
+            attobot._try_jsonb(coalesce(p_args->>'options', '')),
+            coalesce(p_args->>'filename', ''),
+            coalesce(p_args->>'caption', ''),
+            coalesce(p_args->>'mime_type', ''))
+      WHEN 'SEND_AUDIO' THEN attotools._tool_send_audio(
+            nullif(p_args->>'playlist_id', '')::bigint,
+            coalesce(p_args->>'transform', 'extract_audio'),
+            attobot._try_jsonb(coalesce(p_args->>'options', '')),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
