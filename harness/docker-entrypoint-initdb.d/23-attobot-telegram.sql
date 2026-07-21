@@ -251,24 +251,22 @@ BEGIN
 END;
 $$;
 
--- Send one outbound message via Telegram. Called inside a send instance
--- (df.start from the outbound trigger). A text reply is delivered upstream by
--- df.http (sendMessage) in the send graph (p_http_response carries that
--- result); an attachment is uploaded here via curl (sendPhoto/sendAudio/
--- sendVideo/sendDocument, chosen by the kind queued with the attachment).
+-- Final node of the send graph (df.start-ed as attobot:send:<msg_id> from the
+-- outbound trigger). The request itself was already delivered upstream by the
+-- graph: df.http (sendMessage) for a text reply, or df.http_multipart
+-- (sendPhoto/sendAudio/sendVideo/sendDocument) for an attachment — p_http_response
+-- carries either response, both shaped {status, body, headers, ok}.
 --
--- On a Telegram API error (non-2xx, or ok:false on the text path) it RAISEs,
--- which fails the send instance — pg_durable has no df.fail, so an unhandled
--- exception in a node is what marks the workflow failed. df.http treats a 4xx
--- response as success (not a failure), so a rejected sendMessage only surfaces
--- here; raising makes a failed send visible as a failed instance instead of a
--- silent completed one.
+-- On a Telegram API error (non-2xx, or ok:false in the body) it RAISEs, which
+-- fails the send instance — pg_durable has no df.fail, so an unhandled exception
+-- in a node is what marks the workflow failed. df.http / df.http_multipart treat a
+-- 4xx response as success (not a failure), so a rejected send only surfaces here;
+-- raising makes a failed send visible as a failed instance instead of a silent
+-- completed one. (The text and attachment paths now share this one guard.)
 --
--- SELF-BINDS the agent GUC: the send instance runs in its own transaction,
--- separate from the outbound trigger whose is_local bind does not survive into
--- here, so the agent-scoped reads (messages/config) resolve under RLS. The slug
--- is threaded in (rather than read from the message) so the GUC can be bound
--- before the agent-scoped message read.
+-- Pure: it parses only p_http_response, so it needs no agent-scoped reads and no
+-- GUC bind. p_agent_slug / p_message_id are kept in the signature for the graph
+-- node call and the instance label.
 CREATE OR REPLACE FUNCTION attobot.send_message(
   p_agent_slug text,
   p_message_id bigint,
@@ -280,101 +278,15 @@ SECURITY INVOKER
 SET search_path = attobot, attotools, public, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := attobot.agent_id(p_agent_slug);
-  v_msg attobot.messages%ROWTYPE;
-  v_chat_id text;
-  v_thread_id text;
-  v_att jsonb;
-  v_kind text;
-  v_method text;
-  v_field text;
-  v_content bytea;
-  v_filename text;
-  v_mime_type text;
-  v_caption text;
-  v_url text;
-  v_oid oid;
-  v_path text;
-  v_command text;
-  v_output text;
   v_status integer := 0;
-  v_response_text text := '';
 BEGIN
-  PERFORM set_config('attobot.current_agent_id', v_agent_id::text, true);
-
-  -- Text reply: df.http already delivered it upstream. Parse the status and fail
-  -- the instance when Telegram rejected it (see the function header). The ok
-  -- flag is checked too because Telegram errors carry ok:false. (p_http_response
-  -- non-NULL is the text-path signal; attachments omit it.)
-  IF p_http_response IS NOT NULL THEN
-    v_status := attobot._http_status(p_http_response);
-    IF v_status < 200 OR v_status >= 299
-       OR coalesce((attobot._http_body_json(p_http_response)->>'ok')::boolean, false) IS NOT TRUE THEN
-      RAISE EXCEPTION 'telegram sendMessage failed: http_status=% body=%',
-        v_status, left(coalesce(p_http_response->>'body', ''), 500);
-    END IF;
-    RETURN jsonb_build_object('sent', true, 'status', v_status);
-  END IF;
-
-  -- Attachment via curl multipart. The media bytes and detected kind were queued
-  -- in the message payload (base64); decode them and pick the Telegram method +
-  -- form field by kind.
-  SELECT * INTO v_msg FROM attobot.messages WHERE id = p_message_id;
-  IF v_msg.id IS NULL THEN
-    RETURN jsonb_build_object('sent', false, 'reason', 'message not found');
-  END IF;
-  v_att := v_msg.payload->'attachment';
-
-  v_content := decode(coalesce(v_att->>'content', ''), 'base64');
-  IF v_content IS NULL OR length(v_content) = 0 THEN
-    RETURN jsonb_build_object('sent', false, 'reason', 'attachment has no content');
-  END IF;
-
-  v_kind := coalesce(nullif(v_att->>'kind', ''), 'document');
-  v_method := CASE v_kind WHEN 'photo' THEN 'sendPhoto' WHEN 'audio' THEN 'sendAudio' WHEN 'video' THEN 'sendVideo' ELSE 'sendDocument' END;
-  v_field  := CASE v_kind WHEN 'photo' THEN 'photo'    WHEN 'audio' THEN 'audio'   WHEN 'video' THEN 'video'   ELSE 'document'  END;
-
-  v_chat_id := coalesce(nullif(v_msg.chat_id, ''), attobot._config_text(v_agent_id, 'telegram_chat_id'));
-  v_thread_id := attobot._config_text(v_agent_id, 'telegram_thread_id');
-  v_filename := attobot._telegram_attachment_filename(v_att->>'filename', v_kind, p_message_id);
-  v_mime_type := coalesce(nullif(btrim(v_att->>'mime_type'), ''), 'application/octet-stream');
-  IF v_mime_type !~ '^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$' THEN
-    v_mime_type := 'application/octet-stream';
-  END IF;
-  v_caption := left(coalesce(v_att->>'caption', ''), 1024);
-  v_url := attobot._telegram_api_url(p_agent_slug, v_method);
-
-  PERFORM attobot._program_output('mkdir -p /tmp/attobot-telegram');
-  v_oid := lo_from_bytea(0, v_content);
-  v_path := '/tmp/attobot-telegram/' || p_message_id || '-' || v_filename;
-  PERFORM lo_export(v_oid, v_path);
-
-  v_command :=
-    'curl --silent --show-error --request POST --write-out ' || attobot._shell_quote(E'\n%{http_code}') ||
-    ' ' || attobot._shell_quote(v_url) ||
-    ' --form-string ' || attobot._shell_quote('chat_id=' || v_chat_id) ||
-    CASE WHEN v_thread_id IS NOT NULL AND v_thread_id <> ''
-      THEN ' --form-string ' || attobot._shell_quote('message_thread_id=' || v_thread_id) ELSE '' END ||
-    CASE WHEN v_caption <> ''
-      THEN ' --form-string ' || attobot._shell_quote('caption=' || v_caption) ELSE '' END ||
-    ' --form ' || attobot._shell_quote(v_field || '=@' || v_path || ';filename=' || v_filename || ';type=' || v_mime_type);
-
-  BEGIN
-    v_output := attobot._program_output(v_command);
-    v_status := coalesce(nullif(substring(v_output from '([0-9]{3})\s*$'), '')::integer, 0);
-    v_response_text := regexp_replace(v_output, E'\n[0-9]{3}\\s*$', '');
-  EXCEPTION WHEN others THEN
-    v_response_text := SQLERRM;
-  END;
-
-  BEGIN IF v_oid IS NOT NULL THEN PERFORM lo_unlink(v_oid); END IF; EXCEPTION WHEN others THEN NULL; END;
-  BEGIN PERFORM attobot._program_output('rm -f -- ' || attobot._shell_quote(v_path)); EXCEPTION WHEN others THEN NULL; END;
-
-  -- Fail the instance when Telegram rejected the upload (see the text path and
-  -- the function header). v_response_text holds curl's body or its error.
-  IF v_status < 200 OR v_status >= 299 THEN
-    RAISE EXCEPTION 'telegram % failed: http_status=% body=%',
-      v_method, v_status, left(coalesce(v_response_text, ''), 500);
+  v_status := attobot._http_status(p_http_response);
+  -- The ok flag is checked too because Telegram errors carry ok:false even
+  -- inside a 2xx envelope (df.http passes Telegram's JSON body through verbatim).
+  IF v_status < 200 OR v_status >= 299
+     OR coalesce((attobot._http_body_json(p_http_response)->>'ok')::boolean, false) IS NOT TRUE THEN
+    RAISE EXCEPTION 'telegram send failed: http_status=% body=%',
+      v_status, left(coalesce(p_http_response->>'body', ''), 500);
   END IF;
   RETURN jsonb_build_object('sent', true, 'status', v_status);
 END;
@@ -407,10 +319,12 @@ AS $$
 $$;
 
 -- Build the send-graph for an outbound message. Text → df.http sendMessage then
--- send_message (returns the status); attachment → send_message (curl upload). Used
--- by the outbound trigger to df.start a send instance. SELF-BINDS the agent GUC
--- for the build-time message read; send_message re-binds it at execution time,
--- so no graph node depends on session state carried over from the trigger.
+-- send_message (parses the status); attachment → df.http_multipart sendPhoto/
+-- sendAudio/sendVideo/sendDocument then send_message. Used by the outbound
+-- trigger to df.start a send instance. SELF-BINDS the agent GUC for the
+-- build-time message + config reads (send_message is now a pure response-parse
+-- with no agent-scoped reads), so no graph node depends on session state carried
+-- over from the trigger.
 CREATE OR REPLACE FUNCTION attobot.send_message_future(p_agent_slug text, p_message_id bigint)
 RETURNS text
 LANGUAGE plpgsql
@@ -425,6 +339,15 @@ DECLARE
   v_is_attachment boolean;
   v_tools text;
   v_body jsonb;
+  v_att jsonb;
+  v_content_b64 text;
+  v_kind text;
+  v_field text;
+  v_method text;
+  v_filename text;
+  v_mime_type text;
+  v_caption text;
+  v_parts jsonb;
 BEGIN
   PERFORM set_config('attobot.current_agent_id', v_agent_id::text, true);
 
@@ -436,8 +359,61 @@ BEGIN
     AND (v_msg.payload->'attachment') ? 'content';
 
   IF v_is_attachment THEN
-    -- attachment: send_message uploads via curl (self-binds the GUC)
-    RETURN format('SELECT attobot.send_message(%L, %s)::jsonb AS result', p_agent_slug, p_message_id);
+    -- attachment: df.http_multipart uploads via sendPhoto/sendAudio/sendVideo/
+    -- sendDocument (field + method chosen by the kind queued with the attachment).
+    -- The media bytes are already base64 in the payload, so they slot straight
+    -- into a part's data_b64 — no /tmp file, no lo_export, no curl. The form
+    -- fields (chat_id, optional thread_id, optional caption) are text parts
+    -- (name + data_b64 of the value). df.http_multipart validates parts at
+    -- graph-build time and bakes them into the node (no $var indirection), so the
+    -- base64 rides in the graph node — which also makes the upload durable-retryable
+    -- without re-reading the message.
+    v_att := v_msg.payload->'attachment';
+    v_content_b64 := coalesce(v_att->>'content', '');
+    v_kind := coalesce(nullif(v_att->>'kind', ''), 'document');
+    v_field := CASE v_kind WHEN 'photo' THEN 'photo' WHEN 'audio' THEN 'audio' WHEN 'video' THEN 'video' ELSE 'document' END;
+    v_method := CASE v_kind WHEN 'photo' THEN 'sendPhoto' WHEN 'audio' THEN 'sendAudio' WHEN 'video' THEN 'sendVideo' ELSE 'sendDocument' END;
+    v_filename := attobot._telegram_attachment_filename(v_att->>'filename', v_kind, p_message_id);
+    v_mime_type := coalesce(nullif(btrim(v_att->>'mime_type'), ''), 'application/octet-stream');
+    IF v_mime_type !~ '^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$' THEN
+      v_mime_type := 'application/octet-stream';
+    END IF;
+    v_caption := left(coalesce(v_att->>'caption', ''), 1024);
+
+    IF v_content_b64 = '' THEN
+      -- nothing to upload: emit a no-op node so df.start still works (mirrors
+      -- send_chat_action_future's no_chat fallback).
+      RETURN format('SELECT %L::text AS result', 'no_content');
+    END IF;
+
+    v_parts := jsonb_build_array(
+      jsonb_build_object('name', 'chat_id', 'data_b64', encode(coalesce(v_chat_id, '')::bytea, 'base64'))
+    );
+    IF v_thread_id IS NOT NULL AND v_thread_id <> '' THEN
+      v_parts := v_parts || jsonb_build_array(
+        jsonb_build_object('name', 'message_thread_id', 'data_b64', encode(v_thread_id::bytea, 'base64'))
+      );
+    END IF;
+    IF v_caption <> '' THEN
+      v_parts := v_parts || jsonb_build_array(
+        jsonb_build_object('name', 'caption', 'data_b64', encode(v_caption::bytea, 'base64'))
+      );
+    END IF;
+    v_parts := v_parts || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+      'name', v_field,
+      'filename', v_filename,
+      'content_type', v_mime_type,
+      'data_b64', v_content_b64
+    )));
+
+    RETURN df.http_multipart(
+      attobot._telegram_api_url(p_agent_slug, v_method), 'POST', v_parts,
+      attobot._telegram_headers(), 30
+    ) |=> 'r'
+      ~> format(
+        'SELECT attobot.send_message(%L, %s, $r::jsonb)::jsonb AS result',
+        p_agent_slug, p_message_id
+      );
   END IF;
 
   -- text: df.http sends via sendMessage, then send_message parses the status.

@@ -7,11 +7,13 @@
 -- must RAISE instead of returning sent:false (which left the instance silently
 -- completed).
 --
--- Only the text path is exercised here: it is pure (df.http's response is passed
--- in as p_http_response, so no network). The attachment path needs curl + a live
--- Telegram endpoint, which the harness cannot reach (the message triggers are
--- disabled in 00_setup.sql and the harness cannot df.start), so it is not under
--- test — but it shares the same RAISE-on-non-2xx guard.
+-- Only the response-parse is exercised here: it is pure (the df.http /
+-- df.http_multipart response is passed in as p_http_response, so no network).
+-- The attachment *upload* (df.http_multipart) needs a live Telegram endpoint,
+-- which the harness cannot reach (the message triggers are disabled in
+-- 00_setup.sql and the harness cannot df.start), so it is not under test — but
+-- text and attachment now share this one RAISE-on-non-2xx guard in send_message,
+-- so it covers both paths' failure logic.
 \set ON_ERROR_STOP on
 BEGIN;
 -- plan(2) up front: this file uses throws_ok, whose result path does not trip
