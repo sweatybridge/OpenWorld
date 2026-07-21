@@ -1138,7 +1138,8 @@ BEGIN
         v_status := 'cancelled';
         EXIT;
       END IF;
-      PERFORM pg_sleep(0.5);
+      -- TODO: use future composition when upstream supports it
+      PERFORM pg_sleep(0.1);
     END LOOP;
 
     BEGIN
