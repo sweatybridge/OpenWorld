@@ -369,7 +369,7 @@ BEGIN
     -- base64 rides in the graph node — which also makes the upload durable-retryable
     -- without re-reading the message.
     v_att := v_msg.payload->'attachment';
-    v_content_b64 := coalesce(v_att->>'content', '');
+    v_content_b64 := translate(coalesce(v_att->>'content', ''), E'\n', '');
     v_kind := coalesce(nullif(v_att->>'kind', ''), 'document');
     v_field := CASE v_kind WHEN 'photo' THEN 'photo' WHEN 'audio' THEN 'audio' WHEN 'video' THEN 'video' ELSE 'document' END;
     v_method := CASE v_kind WHEN 'photo' THEN 'sendPhoto' WHEN 'audio' THEN 'sendAudio' WHEN 'video' THEN 'sendVideo' ELSE 'sendDocument' END;
