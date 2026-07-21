@@ -16,6 +16,7 @@ object Routes {
     const val USERS = "users"
     const val CONFIG = "config?agentId={agentId}"
     const val INDEXES = "indexes"
+    const val MEDIA = "media"
     const val WORKFLOW_DETAIL = "workflow_detail/{id}"
     const val TRACE = "trace/{messageId}"
     const val SETTINGS = "settings"
@@ -50,4 +51,5 @@ val DRAWER_ITEMS: List<DrawerItem> = listOf(
     DrawerItem(Routes.USERS, "👥", "Users"),
     DrawerItem("config", "⚙️", "Config"),
     DrawerItem(Routes.INDEXES, "📇", "Indexes"),
+    DrawerItem(Routes.MEDIA, "🎬", "Media"),
 )

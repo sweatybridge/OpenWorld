@@ -52,6 +52,17 @@ SELECT ok( has_schema_privilege('attobot_anonymous','attotools','USAGE'),       
 SELECT ok( has_schema_privilege('attobot_service','attotools','USAGE'),         'service has USAGE on attotools');
 SELECT ok( has_schema_privilege('attobot_dashboard','attotools','USAGE'),       'dashboard has USAGE on attotools');
 
+-- ----- ffmpeg media page (read-only) -----------------------------------------
+-- dashboard lists hls_playlists (joined to hls_segments) and renders a
+-- per-row thumbnail via ffmpeg.thumbnail on the FIRST segment only. USAGE +
+-- SELECT on the two tables + EXECUTE on the one transform used; no concat, no
+-- INSERT, no sequences (it is read-only like the rest of the dashboard role).
+SELECT ok( has_schema_privilege('attobot_dashboard','ffmpeg','USAGE'),               'dashboard has USAGE on ffmpeg');
+SELECT ok( has_table_privilege('attobot_dashboard','ffmpeg.hls_playlists','SELECT'), 'dashboard can SELECT hls_playlists');
+SELECT ok( has_table_privilege('attobot_dashboard','ffmpeg.hls_segments','SELECT'),  'dashboard can SELECT hls_segments');
+SELECT ok( has_function_privilege('attobot_dashboard','ffmpeg.thumbnail(bytea,double precision,text)','EXECUTE'), 'dashboard can EXECUTE ffmpeg.thumbnail');
+SELECT ok( NOT has_table_privilege('attobot_dashboard','ffmpeg.hls_segments','INSERT'),  'dashboard CANNOT INSERT hls_segments (read-only)');
+
 -- ----- sequence USAGE (only the roles that INSERT) ---------------------------
 -- messages/memory/users seqs -> agent roles; agents/models/memory/users -> service.
 SELECT ok( has_sequence_privilege('attobot_agent_primary','attobot.messages_id_seq','USAGE'),      'primary has USAGE on messages_id_seq');

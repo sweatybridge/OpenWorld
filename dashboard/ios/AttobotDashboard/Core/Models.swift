@@ -293,6 +293,29 @@ struct IndexRow: Codable, Hashable {
     }
 }
 
+// MARK: - Media
+
+/// One ffmpeg.hls_playlists row, aggregated against ffmpeg.hls_segments. The
+/// playlist table itself holds only id + target_duration; segment_count and
+/// total_size arrive as strings (bigint via the wire), total_duration is a
+/// float8 seconds sum. id is a string (bigint::text) and doubles as the
+/// thumbnail path segment.
+struct MediaRow: Codable, Hashable {
+    var id: String
+    var targetDuration: Int
+    var segmentCount: String
+    var totalDuration: Double
+    var totalSize: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case targetDuration = "target_duration"
+        case segmentCount = "segment_count"
+        case totalDuration = "total_duration"
+        case totalSize = "total_size"
+    }
+}
+
 // MARK: - Generic list wrapper
 
 struct RowList<T: Decodable>: Decodable {

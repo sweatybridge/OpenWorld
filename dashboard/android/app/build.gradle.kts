@@ -68,4 +68,8 @@ dependencies {
     // Credential storage (base URL in DataStore, token in EncryptedSharedPreferences)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Image loading (Media page thumbnails). Shares ApiProvider's OkHttp client
+    // so image requests inherit the bearer-token interceptor.
+    implementation("io.coil-kt:coil-compose:2.7.0")
 }

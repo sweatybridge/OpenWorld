@@ -200,6 +200,21 @@ data class IndexRow(
     val definition: String,
 )
 
+// ---------------- Media ----------------
+
+/** One ffmpeg.hls_playlists row, aggregated against ffmpeg.hls_segments. The
+ * playlist table holds only id + target_duration; segment_count and total_size
+ * arrive as strings (bigint over the wire), total_duration is a float8 seconds
+ * sum. id is a string (bigint::text) and doubles as the thumbnail path segment. */
+@Serializable
+data class MediaRow(
+    val id: String,
+    @SerialName("target_duration") val targetDuration: Int,
+    @SerialName("segment_count") val segmentCount: String,
+    @SerialName("total_duration") val totalDuration: Double,
+    @SerialName("total_size") val totalSize: String,
+)
+
 // ---------------- Response wrappers ----------------
 
 @Serializable
@@ -219,6 +234,9 @@ data class ConfigResponse(val rows: List<ConfigRow> = emptyList())
 
 @Serializable
 data class IndexesResponse(val rows: List<IndexRow> = emptyList())
+
+@Serializable
+data class MediaResponse(val rows: List<MediaRow> = emptyList())
 
 // ---------------- Arbitrary-JSON helpers ----------------
 

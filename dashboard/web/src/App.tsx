@@ -5,7 +5,7 @@ import {
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { apiGet, AuthError, getToken, setToken } from "./api";
 import {
-  ConfigPage, IndexesPage, MemoryPage, MessagesPage,
+  ConfigPage, IndexesPage, MediaPage, MemoryPage, MessagesPage,
   OverviewPage, UsersPage, WorkflowsPage, WorkflowDetailPage, AgentsPage, TracePage,
 } from "./pages";
 import { ErrorState, Spinner } from "./components";
@@ -78,6 +78,7 @@ const NAV: Array<[string, string]> = [
   ["/users", "Users"],
   ["/config", "Config"],
   ["/indexes", "Indexes"],
+  ["/media", "Media"],
 ];
 
 function Shell() {
@@ -111,6 +112,7 @@ function Shell() {
           <Route path="/users" element={<UsersPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/indexes" element={<IndexesPage />} />
+          <Route path="/media" element={<MediaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

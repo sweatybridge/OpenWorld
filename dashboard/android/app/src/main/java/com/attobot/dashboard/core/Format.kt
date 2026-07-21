@@ -58,6 +58,21 @@ fun formatMs(ms: Double?): String {
     return "%.1f s".format(ms / 1000.0)
 }
 
+/** A duration in seconds (e.g. an HLS playlist's total runtime); null/<=0 → "—". */
+fun formatDuration(seconds: Double?): String {
+    if (seconds == null || seconds.isNaN() || seconds <= 0.0) return "—"
+    if (seconds < 60.0) {
+        val decimals = if (seconds < 10.0) 1 else 0
+        return "%.${decimals}f s".format(seconds)
+    }
+    val whole = seconds.toLong()
+    val m = (whole / 60).toInt()
+    val s = (whole % 60).toInt()
+    if (m < 60) return "${m}m ${s}s"
+    val h = m / 60
+    return "${h}h ${m % 60}m"
+}
+
 /** Collapse whitespace, trim and clip to [n] chars with an ellipsis. */
 fun truncate(s: String?, n: Int = 100): String {
     if (s.isNullOrBlank()) return ""

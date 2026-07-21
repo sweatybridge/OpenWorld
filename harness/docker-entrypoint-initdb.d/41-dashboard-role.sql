@@ -50,3 +50,14 @@ BEGIN
 EXCEPTION
   WHEN undefined_table THEN NULL;
 END $$;
+
+-- 5. Media page: read ffmpeg.hls_playlists / hls_segments and compute thumbnails.
+--    pg_ffmpeg (CREATE EXTENSION in 02-pg-ffmpeg.sql) owns the schema and both
+--    tables. The dashboard lists playlists (aggregated against hls_segments) and
+--    renders a per-row thumbnail via ffmpeg.thumbnail on the FIRST segment only
+--    (HLS segments keyframe at the start, so segment 0 decodes standalone — no
+--    need to concat the whole playlist). Read-only: SELECT on the two tables +
+--    EXECUTE on the single transform used; no concat, no INSERT, no sequences.
+GRANT USAGE ON SCHEMA ffmpeg TO attobot_dashboard;
+GRANT SELECT ON ffmpeg.hls_playlists, ffmpeg.hls_segments TO attobot_dashboard;
+GRANT EXECUTE ON FUNCTION ffmpeg.thumbnail(bytea, double precision, text) TO attobot_dashboard;

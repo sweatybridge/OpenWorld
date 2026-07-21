@@ -3,6 +3,7 @@ import { pool } from "./db.js";
 import {
   countWorkflows,
   getMetrics,
+  getMediaThumbnail,
   getOverviewAgents,
   getStatusCounts,
   getTypeCounts,
@@ -11,6 +12,7 @@ import {
   listAgents,
   listConfig,
   listIndexes,
+  listMedia,
   listMemory,
   listUsers,
   listWorkflows,
@@ -110,6 +112,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/users", async () => ({ rows: await listUsers() }));
 
   app.get("/api/indexes", async () => ({ rows: await listIndexes() }));
+
+  app.get("/api/media", async () => ({ rows: await listMedia() }));
+
+  // PNG thumbnail for one HLS playlist. Computed server-side from the first
+  // segment; immutable (a playlist is write-once) so the client may cache it
+  // for a day. 404 when there are no segments or ffmpeg can't decode a frame.
+  app.get("/api/media/:id/thumbnail", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const playlistId = parseIntOrNull(id);
+    if (playlistId === null) {
+      reply.code(400);
+      return { error: "bad playlist id" };
+    }
+    const png = await getMediaThumbnail(playlistId);
+    if (!png) {
+      reply.code(404);
+      return { error: "no thumbnail" };
+    }
+    reply.header("Cache-Control", "public, max-age=86400, immutable");
+    reply.type("image/png");
+    return reply.send(png);
+  });
 
   app.get("/api/config", async (req) => {
     const q = req.query as Record<string, string | undefined>;

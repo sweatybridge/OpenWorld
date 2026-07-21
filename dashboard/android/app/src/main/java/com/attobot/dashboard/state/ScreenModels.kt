@@ -8,6 +8,7 @@ import com.attobot.dashboard.core.ApiProvider
 import com.attobot.dashboard.core.AuthException
 import com.attobot.dashboard.core.ConfigRow
 import com.attobot.dashboard.core.IndexRow
+import com.attobot.dashboard.core.MediaRow
 import com.attobot.dashboard.core.MemoryRow
 import com.attobot.dashboard.core.Overview
 import com.attobot.dashboard.core.TraceRow
@@ -256,6 +257,14 @@ class IndexesViewModel : PollingViewModel<List<IndexRow>>(poll = false) {
     fun setSchema(v: String) { _schema.value = v }
 
     override suspend fun fetch(): List<IndexRow> = ApiProvider.indexes()
+}
+
+/**
+ * ffmpeg.hls_playlists — fetched once; each row's thumbnail is loaded directly
+ * by Coil (not via this VM). No poll (mirrors Indexes).
+ */
+class MediaViewModel : PollingViewModel<List<MediaRow>>(poll = false) {
+    override suspend fun fetch(): List<MediaRow> = ApiProvider.media()
 }
 
 // ---- Shared agents cache for AgentPills ------------------------------------

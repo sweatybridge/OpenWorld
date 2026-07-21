@@ -1,6 +1,8 @@
 package com.attobot.dashboard
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.attobot.dashboard.core.ApiProvider
 import com.attobot.dashboard.core.Credentials
 
@@ -12,10 +14,21 @@ import com.attobot.dashboard.core.Credentials
  * Mirrors the RN client, where `loadCredentials()` runs once at startup and the
  * synchronous apiFetch reads module-level state.
  */
-class DashboardApp : Application() {
+class DashboardApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         Credentials.init(this)
         ApiProvider.init()
     }
+
+    /**
+     * Coil singleton: built on [ApiProvider]'s OkHttp client so image requests
+     * (e.g. the Media page's `/api/media/{id}/thumbnail`) inherit the bearer-
+     * token interceptor and reach the dashboard the same way JSON calls do.
+     */
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .okHttpClient(ApiProvider.okhttp())
+            .crossfade(true)
+            .build()
 }
