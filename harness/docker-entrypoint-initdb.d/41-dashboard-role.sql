@@ -24,6 +24,7 @@ END $$;
 --    metrics, status, result, explain), and SELECT on df.instances + df.nodes.
 --    BYPASSRLS makes all rows visible despite per-user RLS.
 SELECT df.grant_usage('attobot_dashboard');
+GRANT EXECUTE ON FUNCTION df.metrics() TO attobot_dashboard;
 
 -- 3. Read access to the attobot domain. RLS is ENABLED but not FORCE on these
 --    tables, and BYPASSRLS bypasses it anyway — but the SELECT privilege is still
