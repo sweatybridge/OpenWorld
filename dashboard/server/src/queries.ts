@@ -4,6 +4,7 @@ import type {
   ConfigRow,
   IndexRow,
   InstanceNode,
+  MediaRow,
   MessageRow,
   OverviewResponse,
   TraceRow,
@@ -282,4 +283,51 @@ export async function listIndexes(): Promise<IndexRow[]> {
      ORDER BY pg_relation_size(idx.oid) DESC, n.nspname, tbl.relname, idx.relname`
   );
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Media (ffmpeg.hls_playlists)
+// ---------------------------------------------------------------------------
+
+// ffmpeg.hls_playlists stores only id + target_duration; the interesting shape
+// (segment count, total duration, total byte size) is aggregated from
+// ffmpeg.hls_segments. octet_length gives logical (uncompressed) bytes — the
+// meaningful media size — at the cost of detoasting each segment's data, which
+// is acceptable for a read-only admin page capped at 500 rows. LEFT JOIN so a
+// playlist whose hls() call produced no segments still lists (with zeroes).
+export async function listMedia(): Promise<MediaRow[]> {
+  const { rows } = await query<MediaRow>(
+    `SELECT p.id::text,
+            p.target_duration::int,
+            count(s.id)::bigint::text                          AS segment_count,
+            COALESCE(sum(s.duration), 0)                       AS total_duration,
+            COALESCE(sum(octet_length(s.data)), 0)::bigint::text AS total_size
+     FROM ffmpeg.hls_playlists p
+     LEFT JOIN ffmpeg.hls_segments s ON s.playlist_id = p.id
+     GROUP BY p.id
+     ORDER BY p.id DESC
+     LIMIT 500`
+  );
+  return rows;
+}
+
+// A PNG thumbnail for one playlist. HLS segments keyframe at the start, so the
+// FIRST segment decodes standalone — ffmpeg.thumbnail needs only it, not the
+// concat of every segment. Returns null when the playlist has no segments or
+// ffmpeg can't decode a frame (corrupt/truncated media), so the caller can 404
+// and the client falls back to a placeholder rather than the whole request 500ing.
+export async function getMediaThumbnail(id: number): Promise<Buffer | null> {
+  try {
+    const { rows } = await query<{ png: Buffer | null }>(
+      `SELECT ffmpeg.thumbnail(
+                (SELECT data FROM ffmpeg.hls_segments
+                 WHERE playlist_id = $1 ORDER BY segment_index ASC LIMIT 1),
+                0.0, 'png') AS png`,
+      [id]
+    );
+    const png = rows[0]?.png;
+    return png && png.length > 0 ? png : null;
+  } catch {
+    return null;
+  }
 }

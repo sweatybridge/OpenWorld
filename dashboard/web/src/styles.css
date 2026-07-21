@@ -83,6 +83,10 @@ h2 { font-size: 14px; margin: 0; text-transform: uppercase; letter-spacing: .04e
 .data-table tr.clickable { cursor: pointer; }
 .data-table tr.clickable:hover { background: var(--panel-2); }
 .data-table td.empty, .empty { color: var(--muted); text-align: center; padding: 24px; }
+
+/* media page thumbnails */
+.media-thumb { width: 96px; height: 54px; object-fit: cover; border-radius: 4px; background: var(--panel-2); display: block; }
+.media-thumb.empty { border: 1px dashed var(--border); }
 .cell-break { overflow-wrap: anywhere; }
 
 /* badges */

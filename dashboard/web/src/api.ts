@@ -140,3 +140,23 @@ export interface IndexRow {
   tuples_read: string;
   definition: string;
 }
+
+// One ffmpeg.hls_playlists row (see server MediaRow). Bigint fields (id,
+// segment_count, total_size) arrive as strings; target_duration and
+// total_duration (seconds) arrive as numbers.
+export interface MediaRow {
+  id: string;
+  target_duration: number;
+  segment_count: string;
+  total_duration: number;
+  total_size: string;
+}
+
+// /api/media/:id/thumbnail returns image/png. An <img> can't attach an
+// Authorization header, so when a token is stored we pass it as a ?token=
+// query param (the server's auth hook accepts that fallback). The native
+// clients send the header through their HTTP stacks instead.
+export function mediaThumbnailUrl(id: string): string {
+  const t = getToken();
+  return `/api/media/${id}/thumbnail${t ? `?token=${encodeURIComponent(t)}` : ""}`;
+}

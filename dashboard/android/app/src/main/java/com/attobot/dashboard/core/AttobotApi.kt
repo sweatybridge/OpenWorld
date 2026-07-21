@@ -67,6 +67,9 @@ interface AttobotApi {
 
     @GET("api/indexes")
     suspend fun indexes(): IndexesResponse
+
+    @GET("api/media")
+    suspend fun media(): MediaResponse
 }
 
 /**
@@ -96,6 +99,24 @@ object ApiProvider {
 
     /** No-op marker; the object holds state initialized lazily. Kept for symmetry. */
     fun init() = Unit
+
+    /**
+     * The shared OkHttp client. Its auth interceptor adds `Authorization: Bearer`
+     * from [Credentials] on every request, so handing it to Coil lets the Media
+     * page load thumbnails (`/api/media/{id}/thumbnail`) through the same authed
+     * transport as the JSON calls — no `?token=` fallback needed.
+     */
+    fun okhttp(): OkHttpClient = okhttp
+
+    /**
+     * Absolute thumbnail URL for an HLS playlist. Uses the configured base URL
+     * (trailing slash trimmed; falls back to localhost when unset) so Coil can
+     * fetch it via the shared authed client.
+     */
+    fun mediaThumbnailUrl(id: String): String {
+        val base = Credentials.currentBaseUrl.trimEnd('/').ifEmpty { "http://localhost" }
+        return "$base/api/media/$id/thumbnail"
+    }
 
     private fun buildClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
@@ -196,4 +217,6 @@ object ApiProvider {
         req { config(agentId?.ifBlank { null }) }.rows
 
     suspend fun indexes(): List<IndexRow> = req { indexes() }.rows
+
+    suspend fun media(): List<MediaRow> = req { media() }.rows
 }

@@ -56,7 +56,11 @@ enum APIClient {
 
     // MARK: - Transport
 
-    private static func fetchData(_ path: String) async throws -> Data {
+    /// GET `path`, returning the raw response body — for binary endpoints such
+    /// as `GET /api/media/:id/thumbnail` (image/png). Same transport, auth, and
+    /// error mapping as the JSON helpers; a caller that only cares about bytes
+    /// wraps it in `try?` so a 404 (no thumbnail) just yields nil.
+    static func fetchData(_ path: String) async throws -> Data {
         let base = Credentials.baseURL
         guard let url = makeURL(base: base, path: path) else {
             throw APIError.message("Invalid server URL.")

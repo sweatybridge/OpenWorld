@@ -49,6 +49,7 @@ import com.attobot.dashboard.ui.screens.AgentsScreen
 import com.attobot.dashboard.ui.screens.BackendDownScreen
 import com.attobot.dashboard.ui.screens.ConfigScreen
 import com.attobot.dashboard.ui.screens.IndexesScreen
+import com.attobot.dashboard.ui.screens.MediaScreen
 import com.attobot.dashboard.ui.screens.MemoryScreen
 import com.attobot.dashboard.ui.screens.MessagesScreen
 import com.attobot.dashboard.ui.screens.OverviewScreen
@@ -181,6 +182,7 @@ private fun AppRoot(gateVM: GateViewModel) {
                     ConfigScreen(navController, entry.arguments?.getString("agentId"))
                 }
                 composable(Routes.INDEXES) { IndexesScreen(navController) }
+                composable(Routes.MEDIA) { MediaScreen(navController) }
                 composable(
                     Routes.WORKFLOW_DETAIL,
                     arguments = listOf(navArgument("id") { type = NavType.StringType }),
@@ -299,6 +301,7 @@ private fun titleForRoute(route: String?): String = when {
     route.startsWith("users") -> "Users"
     route.startsWith("config") -> "Config"
     route.startsWith("indexes") -> "Indexes"
+    route.startsWith("media") -> "Media"
     route.startsWith("workflow_detail") -> "Workflow"
     route.startsWith("trace") -> "Turn trace"
     route.startsWith("settings") -> "Settings"

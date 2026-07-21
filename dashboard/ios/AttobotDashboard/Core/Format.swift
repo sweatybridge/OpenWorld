@@ -77,6 +77,18 @@ enum Format {
         return String(format: "%.1f s", ms / 1000)
     }
 
+    /// Format a duration in seconds (e.g. an HLS playlist's total runtime).
+    /// Mirrors web `formatDuration`. nil/<=0 → "—".
+    static func formatDuration(_ seconds: Double?) -> String {
+        guard let n = seconds, !n.isNaN, n > 0 else { return "—" }
+        if n < 60 { return String(format: "%.\(n < 10 ? 1 : 0)f s", n) }
+        let m = Int(n) / 60
+        let s = Int(n.rounded()) % 60
+        if m < 60 { return "\(m)m \(s)s" }
+        let h = m / 60
+        return "\(h)h \(m % 60)m"
+    }
+
     /// Collapse whitespace, trim; if longer than n, first n chars + ellipsis.
     static func truncate(_ s: String?, n: Int = 100) -> String {
         guard let s, !s.isEmpty else { return "" }

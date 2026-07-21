@@ -109,6 +109,19 @@ export interface IndexRow {
   definition: string; // pg_get_indexdef
 }
 
+// One ffmpeg.hls_playlists row, aggregated against ffmpeg.hls_segments. The
+// playlist table itself holds only id + target_duration; segment_count /
+// total_duration / total_size are derived. bigint values (id, segment_count,
+// total_size) arrive as strings; target_duration (int) and total_duration
+// (float8 seconds) arrive as numbers.
+export interface MediaRow {
+  id: string;
+  target_duration: number;
+  segment_count: string;
+  total_duration: number;
+  total_size: string;
+}
+
 export interface OverviewResponse {
   metrics: Record<string, unknown> | null;
   worker: { started_at: string | null; last_seen_at: string | null; age_seconds: number | null } | null;

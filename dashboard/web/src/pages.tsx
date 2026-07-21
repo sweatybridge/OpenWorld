@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ToolCall, type ConfigRow, type IndexRow, type TraceRow } from "./api";
+import { apiGet, mediaThumbnailUrl, type Overview, type WorkflowList, type WorkflowDetail, type AgentRow, type MessageRow, type ToolCall, type ConfigRow, type IndexRow, type MediaRow, type TraceRow } from "./api";
 import { messageIdFromLabel } from "./label";
 import {
   Card, Column, DataTable, EmptyState, ErrorState, JsonText, JsonView, NodeTree,
   Pager, Spinner, StatusBadge, TypePill,
 } from "./components";
-import { formatDateTime, formatMs, timeAgo, truncate } from "./format";
+import { formatBytes, formatDateTime, formatDuration, formatMs, timeAgo, truncate } from "./format";
 
 const REFRESH_MS = 5000;
 
@@ -639,5 +639,59 @@ export function IndexesPage() {
         ]}
       />
     </>
+  );
+}
+
+// ----------------------------------------------------------------- media
+
+// ffmpeg.hls_playlists: each row is media the agent ingested via ffmpeg.hls and
+// may have sent with send_photo/send_video/send_audio. The thumbnail is computed
+// on demand (server-side, from the first segment) and served as image/png — the
+// <img> fetches it lazily and the browser caches it (immutable).
+export function MediaPage() {
+  const query = useQuery({
+    queryKey: ["media"],
+    queryFn: () => apiGet<{ rows: MediaRow[] }>("/api/media").then((r) => r.rows),
+  });
+
+  if (query.isLoading) return <Spinner />;
+  if (query.error) return <ErrorState message={(query.error as Error).message} />;
+  const rows = query.data ?? [];
+
+  return (
+    <>
+      <h1>Media</h1>
+      <div className="filters">
+        <span className="hint">{rows.length} playlist{rows.length === 1 ? "" : "s"}</span>
+      </div>
+      <DataTable
+        rows={rows}
+        columns={[
+          { key: "thumb", header: "", cell: (r) => <MediaThumb id={r.id} /> },
+          { key: "id", header: "id", cell: (r) => <code>{r.id}</code> },
+          { key: "segs", header: "segments", cell: (r) => r.segment_count },
+          { key: "dur", header: "duration", cell: (r) => formatDuration(r.total_duration) },
+          { key: "size", header: "size", cell: (r) => formatBytes(r.total_size) },
+          { key: "target", header: "target", cell: (r) => `${r.target_duration}s` },
+        ]}
+      />
+    </>
+  );
+}
+
+// A thumbnail cell holds its own error state because DataTable cells are plain
+// functions (not components) and can't use hooks. On a 404 (no segments) or a
+// decode failure the <img> errors and we swap to a placeholder tile.
+function MediaThumb({ id }: { id: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <div className="media-thumb empty" aria-label="no thumbnail" />;
+  return (
+    <img
+      className="media-thumb"
+      loading="lazy"
+      src={mediaThumbnailUrl(id)}
+      onError={() => setFailed(true)}
+      alt=""
+    />
   );
 }

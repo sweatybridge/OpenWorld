@@ -11,6 +11,7 @@ enum Route: Hashable {
     case users
     case config(agentId: String? = nil)
     case indexes
+    case media
     case workflowDetail(id: String)
     case trace(messageId: Int)
 }
@@ -89,6 +90,8 @@ struct RootView: View {
             ConfigScreen(initialAgentId: agentId)
         case .indexes:
             IndexesScreen()
+        case .media:
+            MediaScreen()
         case .workflowDetail(let id):
             WorkflowDetailScreen(id: id)
         case .trace(let messageId):
