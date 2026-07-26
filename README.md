@@ -4,7 +4,6 @@ OpenWorld is a Postgres-resident agent harness built for shared, stateful
 conversations. It is designed for multiplayer agents that join group chats and
 respond safely to unknown numbers by keeping the conversation stream, user
 identity ledger, and access boundaries inside PostgreSQL.
-identity ledger, and access boundaries inside PostgreSQL.
 
 All agent loops run as `pg_durable` workflows, so a turn can survive database
 restarts and resume from its last checkpoint. Every turn, tool call, and inbox

@@ -232,7 +232,7 @@ GRANT SELECT ON ow.messages TO ow_anonymous, ow_authenticated;
 
 All tables: `ENABLE ROW LEVEL SECURITY` (never `FORCE`). `ow_service` is
 `BYPASSRLS` (trusted compute); everything else scoped. Full set in
-`docker-entrypoint-initdb.d/40-ow-rbac.sql`, behaviour verified in
+`docker-entrypoint-initdb.d/40-OpenWorld-rbac.sql`, behaviour verified in
 `tests/pgtap/`. Highlights:
 
 - **messages** — as [§8](#8-the-worked-example-anonymous-group-chat-user-on-messages); users SELECT the configured chat only; agent roles `FOR ALL` on `agent_id = current_agent_id`.
@@ -354,7 +354,7 @@ never merged. Defects fixed here:
   repeatable `ENABLE ROW LEVEL SECURITY`.
 - **`ENABLE` not `FORCE`** — the superuser framework is unaffected; data is
   untouched.
-- **Ordering** — `40-ow-rbac.sql` runs last, after all tables/functions.
+- **Ordering** — `40-OpenWorld-rbac.sql` runs last, after all tables/functions.
 - **Rollback** — `DISABLE ROW LEVEL SECURITY`, `DROP POLICY`, `REVOKE`,
   `DROP ROLE`. None touch user data.
 

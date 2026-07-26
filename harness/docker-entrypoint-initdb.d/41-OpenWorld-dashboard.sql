@@ -4,7 +4,7 @@
 -- pg_durable hides other users' instances behind RLS (a normal role only sees
 -- instances it submitted). The dashboard needs to see *all* workflows and *all*
 -- agents' data, so the role is BYPASSRLS — the same pattern already used for
--- ow_service in 40-ow-rbac.sql. Crucially it gets ONLY SELECT/EXECUTE:
+-- ow_service in 40-OpenWorld-rbac.sql. Crucially it gets ONLY SELECT/EXECUTE:
 -- no INSERT/UPDATE/DELETE/USAGE-on-sequences, so it is read-only at the database
 -- even if the API layer had a bug.
 -- 

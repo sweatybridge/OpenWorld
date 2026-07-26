@@ -7,7 +7,7 @@
 -- /typing labels embed a message id, the loop label did not, and df.instances
 -- has no parent_instance_id. A turn could only be reassembled by time heuristic.
 --
--- start_agent_loop (30-ow-durable.sql) now embeds the trigger message id
+-- start_agent_loop (30-OpenWorld-durable.sql) now embeds the trigger message id
 -- into the loop label (ow:<slug>:loop:<msg_id>), so every instance in a
 -- turn shares a message-id key. This file adds:
 --   * ow.parse_instance_label — pure label → (kind, agent, msg, tool_call)

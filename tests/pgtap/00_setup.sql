@@ -3,7 +3,7 @@
 -- Loaded once (committed) before pg_prove runs the [1-9]*.sql test files.
 -- =============================================================================
 -- The matrix under test is the one ENFORCED by
--- docker-entrypoint-initdb.d/40-ow-rbac.sql (+ dashboard/dashboard-role.sql
+-- docker-entrypoint-initdb.d/40-OpenWorld-rbac.sql (+ 41-OpenWorld-dashboard.sql
 -- for ow_dashboard). It matches docs/abac-rls-security-design.md §7 and the
 -- docs/ARCHITECTURE.md access matrix; tests/README.md notes the few cells whose
 -- least-privilege shape is non-obvious.

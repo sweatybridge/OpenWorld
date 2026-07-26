@@ -2,8 +2,8 @@
 
 `tests/pgtap/` is a [pgTAP](https://pgtap.org) suite that pins down the entire
 **RBAC + Row-Level-Security permission matrix** enforced by
-`docker-entrypoint-initdb.d/40-ow-rbac.sql` and
-`docker-entrypoint-initdb.d/41-ow-dashboard.sql`.
+`docker-entrypoint-initdb.d/40-OpenWorld-rbac.sql` and
+`docker-entrypoint-initdb.d/41-OpenWorld-dashboard.sql`.
 
 It asserts, for every `(role, table, action)` cell:
 

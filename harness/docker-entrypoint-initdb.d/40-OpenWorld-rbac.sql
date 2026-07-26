@@ -229,7 +229,7 @@ ALTER TABLE ow.config ENABLE ROW LEVEL SECURITY;
 
 -- agent roles: write their own config rows. No DELETE is granted, so the FOR ALL
 -- policy still can't delete (mirrors messages_agent_all_own). Requires
--- current_agent_id, which poll_messages binds (23-ow-telegram.sql:128).
+-- current_agent_id, which poll_messages binds (23-OpenWorld-telegram.sql:128).
 DROP POLICY IF EXISTS config_agent_write_own ON ow.config;
 CREATE POLICY config_agent_write_own ON ow.config
   FOR ALL TO ow_agent_primary, ow_agent_sidecar
