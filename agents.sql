@@ -1,19 +1,19 @@
-SELECT attobot.upsert_model(
-  p_model => COALESCE(NULLIF(:'model', ''), 'deepseek-v4-pro'),
-  p_api_base => COALESCE(NULLIF(:'api_base', ''), 'https://api.deepseek.com/v1'),
+SELECT OpenWorld.upsert_model(
+  p_model => COALESCE(NULLIF(:'model', ''), 'Gemma4-26B-A4B'),
+  p_api_base => COALESCE(NULLIF(:'api_base', ''), 'http://localhost:11434/v1'),
   p_temperature => COALESCE(NULLIF(:'temperature', ''), '1.0')::numeric,
   p_reasoning_effort => COALESCE(NULLIF(:'reasoning_effort', ''), 'medium'),
-  p_context_tokens => COALESCE(NULLIF(:'context_tokens', ''), '1000000')::integer,
-  p_multimodal_support => COALESCE(NULLIF(:'multimodal_support', ''), 'false')::boolean
+  p_context_tokens => COALESCE(NULLIF(:'context_tokens', ''), '131072')::integer,
+  p_multimodal_support => COALESCE(NULLIF(:'multimodal_support', ''), 'true')::boolean
 ) AS model_id
 \gset
 
-SELECT attobot.upsert_agent(
+SELECT OpenWorld.upsert_agent(
   p_slug => 'primary',
   p_soul => $primary_soul$
-You are the primary attobot agent.
+You are the primary OpenWorld agent.
 
-You run inside PostgreSQL. Your durable state is in the attobot schema:
+You run inside PostgreSQL. Your durable state is in the OpenWorld schema:
 messages.
 You do not own a filesystem harness.
 
@@ -49,23 +49,23 @@ $primary_soul$,
   p_model_id => :model_id
 );
 
-SELECT attobot.upsert_agent(
-  p_slug => 'subconscious',
-  p_soul => $subconscious_soul$
-You are the subconscious attobot agent.
+SELECT OpenWorld.upsert_agent(
+  p_slug => 'sidecar',
+  p_soul => $sidecar_soul$
+You are the sidecar OpenWorld agent.
 
 You run inside PostgreSQL beside the other agents. Your job is to review their
 durable streams for repeated mistakes, drift, missing lessons, or loops, and to
 keep their memory accurate. You do not talk to the operator directly.
 
-Use SQL to inspect any agent's state in attobot.messages
+Use SQL to inspect any agent's state in OpenWorld.messages
 and related tables. When a lesson is worth recording or a stored memory is wrong,
-correct it in attobot.memory for the relevant agent: INSERT a new memory row, or
+correct it in OpenWorld.memory for the relevant agent: INSERT a new memory row, or
 UPDATE an existing one. Keep entries concise and accurate. If there is nothing
 actionable, stay idle.
 
-Only modify attobot.memory — never overwrite an agent's messages or other state.
-$subconscious_soul$,
+Only modify OpenWorld.memory — never overwrite an agent's messages or other state.
+$sidecar_soul$,
   p_api_key => NULLIF(:'api_key', ''),
   p_model_id => :model_id
 );
@@ -73,18 +73,18 @@ $subconscious_soul$,
 -- Per-agent Exa API key for the SEARCH tool, shared by both agents (one Exa
 -- account). Stored as a secret in each agent's config so either agent's SEARCH
 -- graph builder can read its own key under RLS.
-SELECT attobot.set_config(slug, 'exa_api_key', to_jsonb(NULLIF(:'exa_api_key', '')), true)
-FROM (VALUES ('primary'), ('subconscious')) AS t(slug)
+SELECT OpenWorld.set_config(slug, 'exa_api_key', to_jsonb(NULLIF(:'exa_api_key', '')), true)
+FROM (VALUES ('primary'), ('sidecar')) AS t(slug)
 WHERE NULLIF(:'exa_api_key', '') IS NOT NULL;
 
-SELECT attobot.ensure_agent_cron_loop(
-  p_agent_slug => 'subconscious',
+SELECT OpenWorld.ensure_agent_cron_loop(
+  p_agent_slug => 'sidecar',
   p_name => 'primary-review',
   p_cron => '*/30 * * * *',
   p_message => 'review agent streams for actionable memory corrections'
 );
 
-SELECT attobot.configure_telegram(
+SELECT OpenWorld.configure_telegram(
   p_agent_slug => 'primary',
   p_token => :'telegram_token',
   p_chat_id => :'telegram_chat_id',
@@ -94,20 +94,20 @@ SELECT attobot.configure_telegram(
 WHERE NULLIF(:'telegram_token', '') IS NOT NULL
   AND NULLIF(:'telegram_chat_id', '') IS NOT NULL;
 
-SELECT attobot.ensure_telegram_inbox_loop(
+SELECT OpenWorld.ensure_telegram_inbox_loop(
   p_agent_slug => 'primary',
   p_timeout => COALESCE(NULLIF(:'telegram_poll_timeout', ''), '60')::integer
 )
 WHERE NULLIF(:'telegram_token', '') IS NOT NULL
   AND NULLIF(:'telegram_chat_id', '') IS NOT NULL;
 
-ALTER ROLE attobot_dashboard PASSWORD :'dashboard_db_password';
+ALTER ROLE OpenWorld_dashboard PASSWORD :'dashboard_db_password';
 
 -- SSH host registration for the BASH tool. Mint an ed25519 keypair in-process
 -- with ssh.keygen() (no ssh-keygen binary, no temp files; the private key goes
 -- straight from keygen into ssh.hosts and never touches disk) and register the
 -- host. Idempotent: ON CONFLICT DO UPDATE means re-runs are no-ops and the key
--- is never rotated. Skipped entirely when ATTOBOT_SSH_HOST/ATTOBOT_SSH_USER are
+-- is never rotated. Skipped entirely when OPENWORLD_SSH_HOST/OPENWORLD_SSH_USER are
 -- unset. The public key is RETURNING on every run and written to disk so it can
 -- be volume mounted into the sshd container's ~/.ssh/authorized_keys
 \t on
@@ -117,7 +117,7 @@ ALTER ROLE attobot_dashboard PASSWORD :'dashboard_db_password';
 INSERT INTO ssh.hosts (host_name, host, port, username, private_key, public_key, host_key_fingerprint)
 SELECT :'ssh_host_name', :'ssh_host', :'ssh_port'::integer, :'ssh_user',
        private_key, public_key, NULLIF(:'ssh_fp', '')
-  FROM ssh.keygen('ed25519', 'attobot-' || :'ssh_host_name')
+  FROM ssh.keygen('ed25519', 'OpenWorld-' || :'ssh_host_name')
  WHERE NULLIF(:'ssh_host', '') IS NOT NULL
    AND NULLIF(:'ssh_user', '') IS NOT NULL
  ON CONFLICT (host_name) DO UPDATE SET host_name = EXCLUDED.host_name

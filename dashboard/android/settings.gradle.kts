@@ -1,4 +1,4 @@
-// Gradle settings for the attobot dashboard Android client.
+// Gradle settings for the OpenWorld dashboard Android client.
 pluginManagement {
     repositories {
         google()
@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AttobotDashboard"
+rootProject.name = "OpenWorldDashboard"
 include(":app")

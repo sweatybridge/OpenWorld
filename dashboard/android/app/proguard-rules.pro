@@ -9,11 +9,11 @@
 -keepclasseswithmembers class kotlinx.serialization.json.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,includedescriptorclasses class com.attobot.dashboard.**$$serializer { *; }
--keepclassmembers class com.attobot.dashboard.** {
+-keep,includedescriptorclasses class com.OpenWorld.dashboard.**$$serializer { *; }
+-keepclassmembers class com.OpenWorld.dashboard.** {
     *** Companion;
 }
--keepclasseswithmembers class com.attobot.dashboard.** {
+-keepclasseswithmembers class com.OpenWorld.dashboard.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 

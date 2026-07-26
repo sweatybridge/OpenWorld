@@ -2,8 +2,8 @@ name: pgtap
 
 # Runs the pgTAP RBAC/RLS permission-matrix suite in tests/pgtap/. The suite
 # pins down the entire permission matrix enforced by the harness init SQL
-# (40-attobot-rbac.sql, 41-dashboard-role.sql), so it gates every change to the
-# database schema or roles.
+# (40-OpenWorld-rbac.sql, 41-OpenWorld-dashboard.sql), so it gates every change
+# to the database schema or roles.
 #
 # Everything runs inside Docker via docker-compose.test.yml:
 #   - test-db: throwaway Postgres built from harness/Dockerfile (target: pgtap),
@@ -14,7 +14,8 @@ name: pgtap
 
 on:
   push:
-    branches: [develop, master]
+    branches:
+      - develop
     paths:
       - "harness/docker-entrypoint-initdb.d/**"
       - "harness/Dockerfile"

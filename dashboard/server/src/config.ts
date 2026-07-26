@@ -4,7 +4,7 @@ export const config = {
     host: required("PGHOST", "harness"),
     port: parseInt(process.env.PGPORT ?? "5432", 10),
     database: process.env.PGDATABASE ?? "postgres",
-    user: required("PGUSER", "attobot_dashboard"),
+    user: required("PGUSER", "OpenWorld_dashboard"),
     password: process.env.PGPASSWORD ?? "dashboard",
   },
   port: parseInt(process.env.PORT ?? "8088", 10),

@@ -44,7 +44,7 @@ async function main(): Promise<void> {
 
   try {
     await app.listen({ host: "0.0.0.0", port: config.port });
-    app.log.info({ staticDir }, `attobot dashboard on http://0.0.0.0:${config.port}`);
+    app.log.info({ staticDir }, `OpenWorld dashboard on http://0.0.0.0:${config.port}`);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

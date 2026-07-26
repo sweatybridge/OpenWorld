@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.attobot.dashboard"
+    namespace = "com.OpenWorld.dashboard"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.attobot.dashboard"
+        applicationId = "com.OpenWorld.dashboard"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
