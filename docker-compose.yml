@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - OpenWorld_pgdata:/var/lib/postgresql
+      - harness_pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
       interval: 5s
@@ -28,7 +28,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${OPENWORLD_POSTGRES_PASSWORD:-postgres}
     volumes:
-      - ./agents.sql:/OpenWorld/agents.sql:ro
+      - ./agents.sql:/ow/agents.sql:ro
       - authorized_keys:/root/.ssh:rw
     command:
       - psql
@@ -51,14 +51,14 @@ services:
       - --set=dashboard_db_password=${OPENWORLD_DASHBOARD_PASSWORD:-dashboard}
       - --set=ssh_host=${OPENWORLD_SSH_HOST:-sshd}
       - --set=ssh_port=${OPENWORLD_SSH_PORT:-2222}
-      - --set=ssh_user=${OPENWORLD_SSH_USER:-OpenWorld}
+      - --set=ssh_user=${OPENWORLD_SSH_USER:-ow}
       - --set=ssh_host_name=${OPENWORLD_SSH_HOST_NAME:-default}
       - --set=ssh_fp=${OPENWORLD_SSH_HOST_KEY_FINGERPRINT:-}
-      - --file=/OpenWorld/agents.sql
+      - --file=/ow/agents.sql
       - --quiet
 
-  # Read-only admin dashboard for pg_durable workflows + OpenWorld domain.
-  # View-only: the OpenWorld_dashboard DB role has only SELECT/EXECUTE grants, so
+  # Read-only admin dashboard for pg_durable workflows + ow domain.
+  # View-only: the ow_dashboard DB role has only SELECT/EXECUTE grants, so
   # writes fail at the database even if the API layer had a bug.
   dashboard:
     build:
@@ -73,7 +73,7 @@ services:
       PGHOST: harness
       PGPORT: 5432
       PGDATABASE: postgres
-      PGUSER: openworld_dashboard
+      PGUSER: ow_dashboard
       PGPASSWORD: ${OPENWORLD_DASHBOARD_PASSWORD:-dashboard}
       PORT: 8088
       # Set OPENWORLD_DASHBOARD_TOKEN to require `Authorization: Bearer ***
@@ -101,7 +101,7 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      - USER_NAME=${OPENWORLD_SSH_USER:-OpenWorld}
+      - USER_NAME=${OPENWORLD_SSH_USER:-ow}
       - PUBLIC_KEY_DIR=/etc/authorized_keys
     volumes:
       - authorized_keys:/etc/authorized_keys:ro
@@ -109,5 +109,5 @@ services:
       - "2222:2222"
 
 volumes:
-  OpenWorld_pgdata:
+  harness_pgdata:
   authorized_keys:

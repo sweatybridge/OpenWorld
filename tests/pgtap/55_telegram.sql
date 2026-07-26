@@ -3,7 +3,7 @@
 -- pg_durable has no df.fail; an unhandled RAISE in a node is what marks a
 -- workflow failed (RAISE EXCEPTION surfaces as SQLSTATE P0001, raise_exception).
 -- send_message is the final node of the send graph built by send_message_future
--- (df.start-ed as OpenWorld:send:<msg_id>), so when Telegram rejects the send it
+-- (df.start-ed as ow:send:<msg_id>), so when Telegram rejects the send it
 -- must RAISE instead of returning sent:false (which left the instance silently
 -- completed).
 --
@@ -26,7 +26,7 @@ SELECT plan(2);
 -- fails instead of completing silently. throws_ok's 4-arg form takes errcode
 -- then errmsg (NULL = don't check) then description.
 SELECT throws_ok(
-  $$SELECT OpenWorld.send_message('primary', 0, '{"status":400,"body":"{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: chat not found\"}"}'::jsonb)$$,
+  $$SELECT ow.send_message('primary', 0, '{"status":400,"body":"{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: chat not found\"}"}'::jsonb)$$,
   'P0001'::char(5),
   NULL,
   'text-path 4xx ok:false raises P0001 (fails the send instance)'
@@ -35,7 +35,7 @@ SELECT throws_ok(
 -- 2xx with ok:true (a successful sendMessage): returns sent=true, so the
 -- instance still completes. Guards against the success path being broken.
 SELECT is(
-  (SELECT (OpenWorld.send_message('primary', 0, '{"status":200,"body":"{\"ok\":true,\"result\":{\"message_id\":42}}"}'::jsonb))->>'sent'),
+  (SELECT (ow.send_message('primary', 0, '{"status":200,"body":"{\"ok\":true,\"result\":{\"message_id\":42}}"}'::jsonb))->>'sent'),
   'true',
   'text-path 2xx ok:true returns sent=true (instance completes)'
 );

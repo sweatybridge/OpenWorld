@@ -1,9 +1,9 @@
-// Parse OpenWorld:* durable-instance labels into a friendly type + context.
+// Parse ow:* durable-instance labels into a friendly type + context.
 // The server also derives these in SQL for the list view; this is used for the
 // detail page title and badges where only the raw label is available.
 
 export type LabelType =
-  | "loop" | "inbox" | "cron" | "send" | "tool" | "typing" | "OpenWorld" | "other";
+  | "loop" | "inbox" | "cron" | "send" | "tool" | "typing" | "ow" | "other";
 
 export interface ParsedLabel {
   type: LabelType;
@@ -19,7 +19,7 @@ const LABEL_META: Record<LabelType, { icon: string; label: string }> = {
   send: { icon: "📤", label: "telegram send" },
   tool: { icon: "🔧", label: "tool call" },
   typing: { icon: "⌨️", label: "typing" },
-  OpenWorld: { icon: "🤖", label: "OpenWorld" },
+  ow: { icon: "🤖", label: "ow" },
   other: { icon: "•", label: "workflow" },
 };
 
@@ -29,14 +29,14 @@ export function labelIcon(type: string): string {
 
 export function parseLabel(raw: string): ParsedLabel {
   const parts = raw.split(":");
-  if (parts[0] !== "OpenWorld" || parts.length < 2) {
+  if (parts[0] !== "ow" || parts.length < 2) {
     return { type: "other", agent: null, ref: null, friendly: raw };
   }
-  // OpenWorld:<agent>:inbox
+  // ow:<agent>:inbox
   if (parts.length === 3 && parts[2] === "inbox") {
     return { type: "inbox", agent: parts[1], ref: null, friendly: `${parts[1]} ${LABEL_META.inbox.label}` };
   }
-  // OpenWorld:<agent>:loop  OR  OpenWorld:<agent>:loop:<msg_id>
+  // ow:<agent>:loop  OR  ow:<agent>:loop:<msg_id>
   if (parts[2] === "loop") {
     const ref = parts.length >= 4 && parts[3] ? parts[3] : null;
     return {
@@ -46,30 +46,30 @@ export function parseLabel(raw: string): ParsedLabel {
       friendly: `${parts[1]} ${LABEL_META.loop.label}${ref ? ` · msg #${ref}` : ""}`,
     };
   }
-  // OpenWorld:<agent>:cron:<name>
+  // ow:<agent>:cron:<name>
   if (parts.length >= 4 && parts[2] === "cron") {
     return { type: "cron", agent: parts[1], ref: parts.slice(3).join(":"), friendly: `${parts[1]} cron "${parts.slice(3).join(":")}"` };
   }
-  // OpenWorld:send:<id>
+  // ow:send:<id>
   if (parts[1] === "send" && parts.length >= 3) {
     return { type: "send", agent: null, ref: parts[2], friendly: `send msg #${parts[2]}` };
   }
-  // OpenWorld:typing:<id>
+  // ow:typing:<id>
   if (parts[1] === "typing" && parts.length >= 3) {
     return { type: "typing", agent: null, ref: parts[2], friendly: `typing #${parts[2]}` };
   }
-  // OpenWorld:tool:<msg>:<tc>
+  // ow:tool:<msg>:<tc>
   if (parts[1] === "tool" && parts.length >= 4) {
     return { type: "tool", agent: null, ref: parts.slice(2).join(":"), friendly: `tool msg #${parts[2]}` };
   }
-  return { type: "OpenWorld", agent: null, ref: null, friendly: raw };
+  return { type: "ow", agent: null, ref: null, friendly: raw };
 }
 
 // The numeric message id embedded in a traceable instance label
-// (OpenWorld:<slug>:loop:<id>, OpenWorld:send:<id>, OpenWorld:typing:<id>,
-// OpenWorld:tool:<id>:<tc>), or null. Mirrors OpenWorld.parse_instance_label on the
+// (ow:<slug>:loop:<id>, ow:send:<id>, ow:typing:<id>,
+// ow:tool:<id>:<tc>), or null. Mirrors ow.parse_instance_label on the
 // server; used to open the turn-trace view from any of these instances.
 export function messageIdFromLabel(raw: string): number | null {
-  const m = raw.match(/OpenWorld:(?:[^:]+:loop|send|tool|typing):(\d+)/);
+  const m = raw.match(/ow:(?:[^:]+:loop|send|tool|typing):(\d+)/);
   return m ? Number(m[1]) : null;
 }

@@ -2,7 +2,7 @@
 // Token auth: if the server has DASHBOARD_TOKEN set, a missing/wrong bearer token
 // yields 401, which we surface as AuthError so the UI can prompt.
 
-const TOKEN_KEY = "OpenWorld_dashboard_token";
+const TOKEN_KEY = "ow_dashboard_token";
 
 export class AuthError extends Error {
   constructor() {

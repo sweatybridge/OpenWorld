@@ -577,7 +577,7 @@ export function ConfigPage() {
 
 // ---------------------------------------------------------------- indexes
 
-// Database indexes across all non-system schemas (OpenWorld, OpenWorld_tools, df, …).
+// Database indexes across all non-system schemas (ow, ow_tools, df, …).
 // Surfaces type/size/usage per index; pgvector's hnsw/ivfflat indexes show up
 // here once vector columns are indexed. pg_catalog is readable by any role, so
 // the dashboard role needs no extra grant.

@@ -9,7 +9,7 @@ export interface WorkflowRow {
   submitted_by: string;
   db: string | null;
   updated_at: string;
-  type: string; // parsed from label: loop|inbox|cron|send|tool|typing|OpenWorld|other
+  type: string; // parsed from label: loop|inbox|cron|send|tool|typing|ow|other
   agent: string | null; // parsed from label, when present
 }
 
@@ -94,7 +94,7 @@ export interface ConfigRow {
   updated_at: string;
 }
 
-// One row of pg_index: a database index across the OpenWorld / df / extension
+// One row of pg_index: a database index across the ow / df / extension
 // schemas. Counts and sizes arrive as strings (bigint via node-postgres).
 export interface IndexRow {
   schema_name: string;

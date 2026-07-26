@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION OpenWorld.agent_id(p_slug text)
+CREATE OR REPLACE FUNCTION ow.agent_id(p_slug text)
 RETURNS bigint
 LANGUAGE plpgsql
 STABLE
@@ -6,7 +6,7 @@ AS $$
 DECLARE
   v_id bigint;
 BEGIN
-  SELECT id INTO v_id FROM OpenWorld.agents WHERE slug = p_slug;
+  SELECT id INTO v_id FROM ow.agents WHERE slug = p_slug;
   IF v_id IS NULL THEN
     RAISE EXCEPTION 'unknown OpenWorld agent: %', p_slug;
   END IF;
@@ -14,7 +14,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld.upsert_model(
+CREATE OR REPLACE FUNCTION ow.upsert_model(
   p_model text DEFAULT 'Gemma4-26B-A4B',
   p_api_base text DEFAULT 'http://localhost:11434/v1',
   p_temperature numeric DEFAULT 1.0,
@@ -28,7 +28,7 @@ AS $$
 DECLARE
   v_model_id bigint;
 BEGIN
-  INSERT INTO OpenWorld.models(name, api_base, temperature, reasoning_effort, context_tokens, multimodal_support)
+  INSERT INTO ow.models(name, api_base, temperature, reasoning_effort, context_tokens, multimodal_support)
   VALUES (
     COALESCE(NULLIF(p_model, ''), 'Gemma4-26B-A4B'),
     COALESCE(NULLIF(p_api_base, ''), 'http://localhost:11434/v1'),
@@ -45,7 +45,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld.upsert_agent(
+CREATE OR REPLACE FUNCTION ow.upsert_agent(
   p_slug text DEFAULT 'primary',
   p_soul text DEFAULT '',
   p_api_key text DEFAULT NULL,
@@ -60,15 +60,15 @@ DECLARE
 BEGIN
   IF v_model_id IS NULL THEN
     SELECT model_id INTO v_model_id
-    FROM OpenWorld.agents
+    FROM ow.agents
     WHERE slug = p_slug;
   END IF;
 
   IF v_model_id IS NULL THEN
-    RAISE EXCEPTION 'agent % requires p_model_id; configure a model with OpenWorld.upsert_model first', p_slug;
+    RAISE EXCEPTION 'agent % requires p_model_id; configure a model with ow.upsert_model first', p_slug;
   END IF;
 
-  INSERT INTO OpenWorld.agents(slug, soul, model_id)
+  INSERT INTO ow.agents(slug, soul, model_id)
   VALUES (p_slug, p_soul, v_model_id)
   ON CONFLICT (slug) DO UPDATE
     SET soul = EXCLUDED.soul,
@@ -77,7 +77,7 @@ BEGIN
   RETURNING id INTO v_id;
 
   IF p_api_key IS NOT NULL THEN
-    PERFORM OpenWorld.set_config(p_slug, 'api_key', to_jsonb(p_api_key), true);
+    PERFORM ow.set_config(p_slug, 'api_key', to_jsonb(p_api_key), true);
   END IF;
 
   RETURN v_id;
@@ -87,7 +87,7 @@ $$;
 -- Upsert a channel user by (channel, external_id), refreshing profile fields,
 -- and return its internal id + tier. Called by intake to auto-track telegram
 -- users; tier is whatever is stored (default 'anonymous').
-CREATE OR REPLACE FUNCTION OpenWorld.upsert_user(
+CREATE OR REPLACE FUNCTION ow.upsert_user(
   p_channel text,
   p_external_id text,
   p_username text DEFAULT NULL,
@@ -101,23 +101,23 @@ DECLARE
   v_id bigint;
   v_tier text;
 BEGIN
-  INSERT INTO OpenWorld.users(channel, external_id, username, display_name, payload)
+  INSERT INTO ow.users(channel, external_id, username, display_name, payload)
   VALUES (p_channel, p_external_id, p_username, p_display_name, p_payload)
   ON CONFLICT (channel, external_id) DO UPDATE
     SET username = EXCLUDED.username,
         display_name = EXCLUDED.display_name,
         payload = EXCLUDED.payload,
         updated_at = now()
-  RETURNING OpenWorld.users.id INTO v_id;
+  RETURNING ow.users.id INTO v_id;
 
   -- QUALIFY: the RETURNS TABLE columns (id, tier) shadow table column names.
-  SELECT u.tier INTO v_tier FROM OpenWorld.users u WHERE u.id = v_id;
+  SELECT u.tier INTO v_tier FROM ow.users u WHERE u.id = v_id;
 
   RETURN QUERY SELECT v_id, v_tier;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld.set_config(
+CREATE OR REPLACE FUNCTION ow.set_config(
   p_agent_slug text,
   p_key text,
   p_value jsonb,
@@ -127,9 +127,9 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
 BEGIN
-  INSERT INTO OpenWorld.config(agent_id, key, value, secret)
+  INSERT INTO ow.config(agent_id, key, value, secret)
   VALUES (v_agent_id, p_key, p_value, p_secret)
   ON CONFLICT (agent_id, key) DO UPDATE
     SET value = EXCLUDED.value,
@@ -138,7 +138,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._config_text(
+CREATE OR REPLACE FUNCTION ow._config_text(
   p_agent_id bigint,
   p_key text,
   p_default text DEFAULT NULL
@@ -149,12 +149,12 @@ STABLE
 AS $$
   SELECT coalesce((
     SELECT value #>> '{}'
-    FROM OpenWorld.config
+    FROM ow.config
     WHERE agent_id = p_agent_id AND key = p_key
   ), p_default);
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld.append_message(
+CREATE OR REPLACE FUNCTION ow.append_message(
   p_agent_slug text,
   p_role text,
   p_content text,
@@ -167,14 +167,14 @@ RETURNS bigint
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_id bigint;
 BEGIN
   -- Bind the agent GUC so the INSERT satisfies the agent-scoped WITH CHECK
   -- policy (loop runs as the agent role, not service-bypass).
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
 
-  INSERT INTO OpenWorld.messages(agent_id, role, content, payload, channel, chat_id, tool_call_id)
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id, tool_call_id)
   VALUES (v_agent_id, p_role, coalesce(p_content, ''), coalesce(p_payload, '{}'::jsonb), p_channel, p_chat_id, p_tool_call_id)
   RETURNING id INTO v_id;
 
@@ -186,7 +186,7 @@ $$;
 -- memory.source_message_ids; that array was replaced by the memory_sources
 -- junction table, whose composite foreign keys enforce referential integrity
 -- directly, so the validation is gone and only the timestamp touch remains.)
-CREATE OR REPLACE FUNCTION OpenWorld._touch_memory_updated_at()
+CREATE OR REPLACE FUNCTION ow._touch_memory_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -197,11 +197,11 @@ END;
 $$;
 
 CREATE OR REPLACE TRIGGER memory_touch_updated_at_trigger
-BEFORE INSERT OR UPDATE OF agent_id, content, payload, enabled ON OpenWorld.memory
+BEFORE INSERT OR UPDATE OF agent_id, content, payload, enabled ON ow.memory
 FOR EACH ROW
-EXECUTE FUNCTION OpenWorld._touch_memory_updated_at();
+EXECUTE FUNCTION ow._touch_memory_updated_at();
 
-CREATE OR REPLACE FUNCTION OpenWorld._try_jsonb(p_text text)
+CREATE OR REPLACE FUNCTION ow._try_jsonb(p_text text)
 RETURNS jsonb
 LANGUAGE plpgsql
 IMMUTABLE
@@ -216,7 +216,7 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._http_status(p_http_response jsonb)
+CREATE OR REPLACE FUNCTION ow._http_status(p_http_response jsonb)
 RETURNS integer
 LANGUAGE sql
 IMMUTABLE
@@ -224,43 +224,20 @@ AS $$
   SELECT coalesce((p_http_response->>'status')::integer, 0);
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._http_body_json(p_http_response jsonb)
+CREATE OR REPLACE FUNCTION ow._http_body_json(p_http_response jsonb)
 RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 AS $$
-  SELECT OpenWorld._try_jsonb(coalesce(p_http_response->>'body', ''));
+  SELECT ow._try_jsonb(coalesce(p_http_response->>'body', ''));
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._shell_quote(p_text text)
+CREATE OR REPLACE FUNCTION ow._shell_quote(p_text text)
 RETURNS text
 LANGUAGE plpgsql
 IMMUTABLE
 AS $$
 BEGIN
   RETURN '''' || replace(coalesce(p_text, ''), '''', '''"''"''') || '''';
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION OpenWorld._program_output(p_command text)
-RETURNS text
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_output text;
-BEGIN
-  CREATE TEMP TABLE IF NOT EXISTS OpenWorld_program_output(
-    seq bigserial,
-    line text
-  ) ON COMMIT DROP;
-
-  TRUNCATE OpenWorld_program_output RESTART IDENTITY;
-  EXECUTE format('COPY OpenWorld_program_output(line) FROM PROGRAM %L', p_command);
-
-  SELECT string_agg(line, E'\n' ORDER BY seq)
-  INTO v_output
-  FROM OpenWorld_program_output;
-
-  RETURN coalesce(v_output, '');
 END;
 $$;

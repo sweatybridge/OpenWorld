@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION OpenWorld.configure_telegram(
+CREATE OR REPLACE FUNCTION ow.configure_telegram(
   p_agent_slug text,
   p_token text,
   p_chat_id text,
@@ -9,42 +9,42 @@ RETURNS void
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
 BEGIN
-  PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_token', to_jsonb(p_token), true);
-  PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_chat_id', to_jsonb(p_chat_id));
-  PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_api_base', to_jsonb(p_api_base));
-  PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(0));
+  PERFORM ow.set_config(p_agent_slug, 'telegram_token', to_jsonb(p_token), true);
+  PERFORM ow.set_config(p_agent_slug, 'telegram_chat_id', to_jsonb(p_chat_id));
+  PERFORM ow.set_config(p_agent_slug, 'telegram_api_base', to_jsonb(p_api_base));
+  PERFORM ow.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(0));
 
   IF p_thread_id IS NULL OR p_thread_id = '' THEN
-    DELETE FROM OpenWorld.config
+    DELETE FROM ow.config
     WHERE agent_id = v_agent_id AND key = 'telegram_thread_id';
   ELSE
-    PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_thread_id', to_jsonb(p_thread_id));
+    PERFORM ow.set_config(p_agent_slug, 'telegram_thread_id', to_jsonb(p_thread_id));
   END IF;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._telegram_api_url(p_agent_slug text, p_method text)
+CREATE OR REPLACE FUNCTION ow._telegram_api_url(p_agent_slug text, p_method text)
 RETURNS text
 LANGUAGE plpgsql
 STABLE
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_token text;
   v_api_base text;
 BEGIN
-  v_token := OpenWorld._config_text(v_agent_id, 'telegram_token');
+  v_token := ow._config_text(v_agent_id, 'telegram_token');
   IF v_token IS NULL OR v_token = '' THEN
     RAISE EXCEPTION 'agent % has no telegram_token config', p_agent_slug;
   END IF;
-  v_api_base := OpenWorld._config_text(v_agent_id, 'telegram_api_base', 'https://api.telegram.org');
+  v_api_base := ow._config_text(v_agent_id, 'telegram_api_base', 'https://api.telegram.org');
   RETURN rtrim(v_api_base, '/') || '/bot' || v_token || '/' || p_method;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._telegram_headers()
+CREATE OR REPLACE FUNCTION ow._telegram_headers()
 RETURNS jsonb
 LANGUAGE sql
 STABLE
@@ -52,22 +52,22 @@ AS $$
   SELECT jsonb_build_object('Content-Type', 'application/json');
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld.telegram_get_updates_body(p_agent_slug text, p_timeout integer)
+CREATE OR REPLACE FUNCTION ow.telegram_get_updates_body(p_agent_slug text, p_timeout integer)
 RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_offset bigint;
 BEGIN
   -- Bind the agent GUC before reading config: this runs as the agent role in the
-  -- inbox loop, so RLS on OpenWorld.config binds us (config_agent_read_own requires
+  -- inbox loop, so RLS on ow.config binds us (config_agent_read_own requires
   -- current_agent_id). Without it the offset read returns NULL and falls back to
   -- 0 every cycle, re-fetching the same updates forever. Mirrors poll_messages
   -- (line 128 below). Mutating a session GUC is a side effect, so this is no
   -- longer STABLE.
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
-  v_offset := coalesce(OpenWorld._config_text(v_agent_id, 'telegram_update_offset', '0')::bigint, 0);
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  v_offset := coalesce(ow._config_text(v_agent_id, 'telegram_update_offset', '0')::bigint, 0);
   RETURN jsonb_build_object(
     'offset', v_offset,
     'timeout', p_timeout,
@@ -76,7 +76,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld._telegram_attachment_filename(
+CREATE OR REPLACE FUNCTION ow._telegram_attachment_filename(
   p_filename text,
   p_kind text,
   p_msg_id bigint
@@ -105,7 +105,7 @@ $$;
 -- Long-poll intake: parse Telegram getUpdates, track senders, and batch-insert
 -- user messages (channel='telegram', chat_id set). The insert fires the
 -- user→loop trigger; no explicit start_turn. Returns {accepted, ignored}.
-CREATE OR REPLACE FUNCTION OpenWorld.poll_messages(
+CREATE OR REPLACE FUNCTION ow.poll_messages(
   p_agent_slug text,
   p_http_response jsonb
 )
@@ -113,7 +113,7 @@ RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_status integer;
   v_body jsonb;
   v_update jsonb;
@@ -132,12 +132,12 @@ DECLARE
 BEGIN
   -- Bind the agent GUC (the inbox loop runs as the agent role, not
   -- service-bypass) before any agent-scoped config/message read.
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
-  v_chat_id := OpenWorld._config_text(v_agent_id, 'telegram_chat_id');
-  v_thread_id := OpenWorld._config_text(v_agent_id, 'telegram_thread_id');
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  v_chat_id := ow._config_text(v_agent_id, 'telegram_chat_id');
+  v_thread_id := ow._config_text(v_agent_id, 'telegram_thread_id');
 
-  v_status := OpenWorld._http_status(p_http_response);
-  v_body := OpenWorld._http_body_json(p_http_response);
+  v_status := ow._http_status(p_http_response);
+  v_body := ow._http_body_json(p_http_response);
 
   IF v_status < 200 OR v_status >= 300 OR coalesce((v_body->>'ok')::boolean, false) IS NOT TRUE THEN
     RETURN jsonb_build_object('accepted', 0, 'ignored', 0, 'error', true);
@@ -168,7 +168,7 @@ BEGIN
     -- track the sender (channel-agnostic ledger)
     v_from_id := v_message #>> '{from,id}';
     IF v_from_id IS NOT NULL AND v_from_id <> '' THEN
-      PERFORM OpenWorld.upsert_user(
+      PERFORM ow.upsert_user(
         'telegram', v_from_id,
         v_message #>> '{from,username}',
         v_message #>> '{from,first_name}',
@@ -187,7 +187,7 @@ BEGIN
 
   -- batch insert (one statement → one user→loop trigger fire)
   IF v_accepted_count > 0 THEN
-    INSERT INTO OpenWorld.messages(agent_id, role, content, payload, channel, chat_id)
+    INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
     SELECT v_agent_id, 'user',
            format('[telegram %s] %s', (e->>'update_id')::bigint, e->>'text'),
            jsonb_build_object('telegram_update', e->'update'),
@@ -197,7 +197,7 @@ BEGIN
   END IF;
 
   IF v_max_update_id IS NOT NULL THEN
-    PERFORM OpenWorld.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(v_max_update_id + 1));
+    PERFORM ow.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(v_max_update_id + 1));
   END IF;
 
   RETURN jsonb_build_object('accepted', v_accepted_count, 'ignored', v_ignored, 'error', false);
@@ -207,9 +207,9 @@ $$;
 -- Queue an outbound attachment by appending a system message (channel='telegram')
 -- that the outbound trigger delivers. The media bytes (base64) and detected kind
 -- ride in the payload; send_message reads them and routes to sendPhoto/
--- sendAudio/sendVideo/sendDocument. SECURITY DEFINER owner OpenWorld_agent_primary
+-- sendAudio/sendVideo/sendDocument. SECURITY DEFINER owner ow_agent_primary
 -- so it works even when called from the anonymous acting role inside a tool call.
-CREATE OR REPLACE FUNCTION OpenWorld.queue_outbound_attachment(
+CREATE OR REPLACE FUNCTION ow.queue_outbound_attachment(
   p_agent_slug text,
   p_content_b64 text,
   p_kind text,
@@ -221,17 +221,17 @@ CREATE OR REPLACE FUNCTION OpenWorld.queue_outbound_attachment(
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = OpenWorld, OpenWorld_tools, pg_temp
+SET search_path = ow, ow_tools, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_id bigint;
 BEGIN
   IF p_chat_id IS NULL OR p_chat_id = '' THEN
-    p_chat_id := OpenWorld._config_text(v_agent_id, 'telegram_chat_id');
+    p_chat_id := ow._config_text(v_agent_id, 'telegram_chat_id');
   END IF;
 
-  INSERT INTO OpenWorld.messages(agent_id, role, content, payload, channel, chat_id)
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
   VALUES (
     v_agent_id, 'system', '',
     jsonb_build_object(
@@ -251,7 +251,7 @@ BEGIN
 END;
 $$;
 
--- Final node of the send graph (df.start-ed as OpenWorld:send:<msg_id> from the
+-- Final node of the send graph (df.start-ed as ow:send:<msg_id> from the
 -- outbound trigger). The request itself was already delivered upstream by the
 -- graph: df.http (sendMessage) for a text reply, or df.http_multipart
 -- (sendPhoto/sendAudio/sendVideo/sendDocument) for an attachment — p_http_response
@@ -267,7 +267,7 @@ $$;
 -- Pure: it parses only p_http_response, so it needs no agent-scoped reads and no
 -- GUC bind. p_agent_slug / p_message_id are kept in the signature for the graph
 -- node call and the instance label.
-CREATE OR REPLACE FUNCTION OpenWorld.send_message(
+CREATE OR REPLACE FUNCTION ow.send_message(
   p_agent_slug text,
   p_message_id bigint,
   p_http_response jsonb DEFAULT NULL
@@ -275,16 +275,16 @@ CREATE OR REPLACE FUNCTION OpenWorld.send_message(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_status integer := 0;
 BEGIN
-  v_status := OpenWorld._http_status(p_http_response);
+  v_status := ow._http_status(p_http_response);
   -- The ok flag is checked too because Telegram errors carry ok:false even
   -- inside a 2xx envelope (df.http passes Telegram's JSON body through verbatim).
   IF v_status < 200 OR v_status >= 299
-     OR coalesce((OpenWorld._http_body_json(p_http_response)->>'ok')::boolean, false) IS NOT TRUE THEN
+     OR coalesce((ow._http_body_json(p_http_response)->>'ok')::boolean, false) IS NOT TRUE THEN
     RAISE EXCEPTION 'telegram send failed: http_status=% body=%',
       v_status, left(coalesce(p_http_response->>'body', ''), 500);
   END IF;
@@ -300,7 +300,7 @@ $$;
 -- brackets/underscores/asterisks inside the args). Returns '' when there are
 -- no calls or the input is not an array — an empty input is not wrapped, to
 -- avoid emitting an empty code block.
-CREATE OR REPLACE FUNCTION OpenWorld._render_tool_calls(p_tool_calls jsonb)
+CREATE OR REPLACE FUNCTION ow._render_tool_calls(p_tool_calls jsonb)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -325,15 +325,15 @@ $$;
 -- build-time message + config reads (send_message is now a pure response-parse
 -- with no agent-scoped reads), so no graph node depends on session state carried
 -- over from the trigger.
-CREATE OR REPLACE FUNCTION OpenWorld.send_message_future(p_agent_slug text, p_message_id bigint)
+CREATE OR REPLACE FUNCTION ow.send_message_future(p_agent_slug text, p_message_id bigint)
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
-  v_msg OpenWorld.messages%ROWTYPE;
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_msg ow.messages%ROWTYPE;
   v_chat_id text;
   v_thread_id text;
   v_is_attachment boolean;
@@ -349,11 +349,11 @@ DECLARE
   v_caption text;
   v_parts jsonb;
 BEGIN
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
 
-  SELECT * INTO v_msg FROM OpenWorld.messages WHERE id = p_message_id;
-  v_chat_id := coalesce(nullif(v_msg.chat_id, ''), OpenWorld._config_text(v_agent_id, 'telegram_chat_id'));
-  v_thread_id := OpenWorld._config_text(v_agent_id, 'telegram_thread_id');
+  SELECT * INTO v_msg FROM ow.messages WHERE id = p_message_id;
+  v_chat_id := coalesce(nullif(v_msg.chat_id, ''), ow._config_text(v_agent_id, 'telegram_chat_id'));
+  v_thread_id := ow._config_text(v_agent_id, 'telegram_thread_id');
   v_is_attachment := v_msg.payload ? 'attachment'
     AND jsonb_typeof(v_msg.payload->'attachment') = 'object'
     AND (v_msg.payload->'attachment') ? 'content';
@@ -373,7 +373,7 @@ BEGIN
     v_kind := coalesce(nullif(v_att->>'kind', ''), 'document');
     v_field := CASE v_kind WHEN 'photo' THEN 'photo' WHEN 'audio' THEN 'audio' WHEN 'video' THEN 'video' ELSE 'document' END;
     v_method := CASE v_kind WHEN 'photo' THEN 'sendPhoto' WHEN 'audio' THEN 'sendAudio' WHEN 'video' THEN 'sendVideo' ELSE 'sendDocument' END;
-    v_filename := OpenWorld._telegram_attachment_filename(v_att->>'filename', v_kind, p_message_id);
+    v_filename := ow._telegram_attachment_filename(v_att->>'filename', v_kind, p_message_id);
     v_mime_type := coalesce(nullif(btrim(v_att->>'mime_type'), ''), 'application/octet-stream');
     IF v_mime_type !~ '^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$' THEN
       v_mime_type := 'application/octet-stream';
@@ -407,11 +407,11 @@ BEGIN
     )));
 
     RETURN df.http_multipart(
-      OpenWorld._telegram_api_url(p_agent_slug, v_method), 'POST', v_parts,
-      OpenWorld._telegram_headers(), 30
+      ow._telegram_api_url(p_agent_slug, v_method), 'POST', v_parts,
+      ow._telegram_headers(), 30
     ) |=> 'r'
       ~> format(
-        'SELECT OpenWorld.send_message(%L, %s, $r::jsonb)::jsonb AS result',
+        'SELECT ow.send_message(%L, %s, $r::jsonb)::jsonb AS result',
         p_agent_slug, p_message_id
       );
   END IF;
@@ -419,7 +419,7 @@ BEGIN
   -- text: df.http sends via sendMessage, then send_message parses the status.
   -- A tool-call turn with empty content is rendered to its tool name + params
   -- so the chat sees what the agent is doing instead of an empty message.
-  v_tools := OpenWorld._render_tool_calls(v_msg.payload->'tool_calls');
+  v_tools := ow._render_tool_calls(v_msg.payload->'tool_calls');
   v_body := jsonb_build_object(
     'chat_id', v_chat_id,
     'parse_mode', 'Markdown',
@@ -430,11 +430,11 @@ BEGIN
   END IF;
 
   RETURN df.http(
-    OpenWorld._telegram_api_url(p_agent_slug, 'sendMessage'), 'POST', v_body::text,
-    OpenWorld._telegram_headers(), 30
+    ow._telegram_api_url(p_agent_slug, 'sendMessage'), 'POST', v_body::text,
+    ow._telegram_headers(), 30
   ) |=> 'r'
     ~> format(
-      'SELECT OpenWorld.send_message(%L, %s, $r::jsonb)::jsonb AS result',
+      'SELECT ow.send_message(%L, %s, $r::jsonb)::jsonb AS result',
       p_agent_slug, p_message_id
     );
 END;
@@ -447,7 +447,7 @@ $$;
 -- message_thread_id replies use. The status set here auto-expires after ~5s and
 -- is cleared automatically once the bot's reply is delivered, so callers need
 -- not (and cannot) send an explicit reset.
-CREATE OR REPLACE FUNCTION OpenWorld.send_chat_action_future(
+CREATE OR REPLACE FUNCTION ow.send_chat_action_future(
   p_agent_slug text,
   p_chat_id text,
   p_action text DEFAULT 'typing'
@@ -455,28 +455,28 @@ CREATE OR REPLACE FUNCTION OpenWorld.send_chat_action_future(
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_chat_id text;
   v_thread_id text;
   v_body jsonb;
 BEGIN
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
-  v_chat_id := coalesce(nullif(p_chat_id, ''), OpenWorld._config_text(v_agent_id, 'telegram_chat_id'));
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  v_chat_id := coalesce(nullif(p_chat_id, ''), ow._config_text(v_agent_id, 'telegram_chat_id'));
   -- no resolvable chat (not configured): emit a no-op node so df.start still works
   IF v_chat_id IS NULL OR v_chat_id = '' THEN
     RETURN format('SELECT %L::text AS result', 'no_chat');
   END IF;
-  v_thread_id := OpenWorld._config_text(v_agent_id, 'telegram_thread_id');
+  v_thread_id := ow._config_text(v_agent_id, 'telegram_thread_id');
   v_body := jsonb_build_object('chat_id', v_chat_id, 'action', coalesce(nullif(p_action, ''), 'typing'));
   IF v_thread_id IS NOT NULL AND v_thread_id <> '' THEN
     v_body := v_body || jsonb_build_object('message_thread_id', v_thread_id::bigint);
   END IF;
   RETURN df.http(
-    OpenWorld._telegram_api_url(p_agent_slug, 'sendChatAction'), 'POST', v_body::text,
-    OpenWorld._telegram_headers(), 15
+    ow._telegram_api_url(p_agent_slug, 'sendChatAction'), 'POST', v_body::text,
+    ow._telegram_headers(), 15
   );
 END;
 $$;

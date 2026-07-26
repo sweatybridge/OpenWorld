@@ -2,8 +2,8 @@
 
 `tests/pgtap/` is a [pgTAP](https://pgtap.org) suite that pins down the entire
 **RBAC + Row-Level-Security permission matrix** enforced by
-`docker-entrypoint-initdb.d/40-OpenWorld-rbac.sql` and
-`docker-entrypoint-initdb.d/41-OpenWorld-dashboard.sql`.
+`docker-entrypoint-initdb.d/40-ow-rbac.sql` and
+`docker-entrypoint-initdb.d/41-ow-dashboard.sql`.
 
 It asserts, for every `(role, table, action)` cell:
 
@@ -13,9 +13,9 @@ It asserts, for every `(role, table, action)` cell:
   DELETE is allowed), using the `pgtap_test.visible_count` / `pgtap_test.can`
   helpers in `00_setup.sql`.
 
-The six roles under test: `OpenWorld_anonymous`, `OpenWorld_authenticated`,
-`OpenWorld_agent_primary`, `OpenWorld_agent_sidecar`, `OpenWorld_service`,
-`OpenWorld_dashboard`.
+The six roles under test: `ow_anonymous`, `ow_authenticated`,
+`ow_agent_primary`, `ow_agent_sidecar`, `ow_service`,
+`ow_dashboard`.
 
 ## Run
 
@@ -51,7 +51,7 @@ A few cells are non-obvious least-privilege decisions worth calling out:
 | # | Table | Cell | Behaviour |
 |---|---|---|---|
 | 1 | `messages` | anonymous/authenticated | **SELECT only** — the configured chat is one agent = one chat, so a user reads all of it; the agent role appends/edits on their behalf. Users never write. |
-| 2 | `config` | service | **non-secret only**, via the `OpenWorld.config_public` view — `service` is the sidecar's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
+| 2 | `config` | service | **non-secret only**, via the ``ow.config_public` view — `service` is the sidecar's LLM-SQL tool scope and has **no** grant on the base `config` table, so secret rows (`api_key`, `telegram_token`) are unreachable even though `service` is `BYPASSRLS`. |
 
-`OpenWorld_dashboard` is `BYPASSRLS` with `SELECT`/`EXECUTE` only; it reads secret
+`ow_dashboard` is `BYPASSRLS` with `SELECT`/`EXECUTE` only; it reads secret
 `config` rows but the dashboard API redacts them server-side.

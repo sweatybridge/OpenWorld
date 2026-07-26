@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION OpenWorld_tools._append_tool_message(
+CREATE OR REPLACE FUNCTION ow_tools._append_tool_message(
   p_agent_id bigint,
   p_tool_call_id text,
   p_result text
@@ -9,9 +9,9 @@ AS $$
 BEGIN
   -- Bind the agent GUC so the INSERT satisfies the agent-scoped WITH CHECK
   -- policy (run_tool_calls runs as the loop/agent role, not service-bypass).
-  PERFORM set_config('OpenWorld.current_agent_id', p_agent_id::text, true);
+  PERFORM set_config('ow.current_agent_id', p_agent_id::text, true);
 
-  INSERT INTO OpenWorld.messages(agent_id, role, content, tool_call_id)
+  INSERT INTO ow.messages(agent_id, role, content, tool_call_id)
   VALUES (p_agent_id, 'tool', coalesce(p_result, ''), p_tool_call_id)
   ON CONFLICT (agent_id, tool_call_id)
     WHERE role = 'tool' AND tool_call_id IS NOT NULL
@@ -25,7 +25,7 @@ $$;
 -- then filename extension, then ffmpeg.media_info introspection of the container
 -- (falls back to 'document' when the bytes are unparseable). media_info yields
 -- {format, duration, streams:[{type:'video'|'audio'|..., codec, ...}]}.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._attachment_kind(
+CREATE OR REPLACE FUNCTION ow_tools._attachment_kind(
   p_bytes bytea,
   p_mime_type text,
   p_filename text
@@ -96,10 +96,10 @@ $$;
 -- outbound trigger delivers. The media bytes ride in the message payload as
 -- base64, so media produced by an ffmpeg function
 -- (thumbnail/transcode/waveform/generate_gif/...) can be sent in one call.
--- queue_outbound_attachment (SECURITY DEFINER, owner OpenWorld_agent_primary) does
+-- queue_outbound_attachment (SECURITY DEFINER, owner ow_agent_primary) does
 -- the privileged append so this works even when the caller is the anonymous
 -- acting role.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_attachment(
+CREATE OR REPLACE FUNCTION ow_tools._tool_send_attachment(
   p_content text,
   p_encoding text,
   p_filename text DEFAULT '',
@@ -110,7 +110,7 @@ RETURNS text
 LANGUAGE plpgsql
 AS $$
 DECLARE
-  v_agent_id bigint := nullif(current_setting('OpenWorld.current_agent_id', true), '')::bigint;
+  v_agent_id bigint := nullif(current_setting('ow.current_agent_id', true), '')::bigint;
   v_bytes bytea;
   v_kind text;
   v_slug text;
@@ -120,15 +120,15 @@ BEGIN
     RAISE EXCEPTION 'SEND_ATTACHMENT has no current agent context';
   END IF;
 
-  v_bytes := OpenWorld_tools._decode_content(p_content, p_encoding);
-  v_kind := OpenWorld_tools._attachment_kind(v_bytes, p_mime_type, p_filename);
+  v_bytes := ow_tools._decode_content(p_content, p_encoding);
+  v_kind := ow_tools._attachment_kind(v_bytes, p_mime_type, p_filename);
 
   SELECT slug, chat_id INTO v_slug, v_chat_id
-  FROM OpenWorld.messages m JOIN OpenWorld.agents a ON a.id = m.agent_id
+  FROM ow.messages m JOIN ow.agents a ON a.id = m.agent_id
   WHERE m.agent_id = v_agent_id AND m.role = 'user'
   ORDER BY m.id DESC LIMIT 1;
 
-  PERFORM OpenWorld.queue_outbound_attachment(
+  PERFORM ow.queue_outbound_attachment(
     v_slug,
     encode(v_bytes, 'base64'),
     v_kind,
@@ -141,7 +141,7 @@ BEGIN
   RETURN jsonb_build_object('queued', true, 'kind', v_kind, 'bytes', length(v_bytes))::text;
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_send_attachment(text, text, text, text, text) IS 'Send media (image/audio/video) as a Telegram attachment. Pass the raw content with an encoding (base64, hex, escape, or a text encoding like UTF8). The kind is auto-detected from mime_type/filename, falling back to ffmpeg.media_info: photos use sendPhoto, audio sendAudio, video sendVideo, anything else sendDocument.';
+COMMENT ON FUNCTION ow_tools._tool_send_attachment(text, text, text, text, text) IS 'Send media (image/audio/video) as a Telegram attachment. Pass the raw content with an encoding (base64, hex, escape, or a text encoding like UTF8). The kind is auto-detected from mime_type/filename, falling back to ffmpeg.media_info: photos use sendPhoto, audio sendAudio, video sendVideo, anything else sendDocument.';
 
 -- Reconstruct one continuous media blob from the HLS segments stored for a
 -- playlist (created by ffmpeg.hls(url, segment_duration), which returns the
@@ -150,10 +150,10 @@ COMMENT ON FUNCTION OpenWorld_tools._tool_send_attachment(text, text, text, text
 -- dimensions so they are concat-compatible. The send_photo/send_video/
 -- send_audio tools key off this id so the media bytes are produced and
 -- consumed server-side and never flow through the LLM's arguments or results.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._hls_media(p_playlist_id bigint)
+CREATE OR REPLACE FUNCTION ow_tools._hls_media(p_playlist_id bigint)
 RETURNS bytea
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, pg_temp
+SET search_path = ow, ow_tools, pg_temp
 AS $$
 DECLARE
   v_bytes bytea;
@@ -188,7 +188,7 @@ $$;
 -- bytes never leave this call as text: queue_outbound_attachment base64-
 -- encodes them into the message payload, and the returned JSON carries only
 -- lengths and labels.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._queue_send(
+CREATE OR REPLACE FUNCTION ow_tools._queue_send(
   p_kind text,
   p_bytes bytea,
   p_transform text,
@@ -198,10 +198,10 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools._queue_send(
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, pg_temp
+SET search_path = ow, ow_tools, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := nullif(current_setting('OpenWorld.current_agent_id', true), '')::bigint;
+  v_agent_id bigint := nullif(current_setting('ow.current_agent_id', true), '')::bigint;
   v_detected text;
   v_slug text;
   v_chat_id text;
@@ -213,14 +213,14 @@ BEGIN
     RAISE EXCEPTION 'send tool produced no media bytes';
   END IF;
 
-  v_detected := OpenWorld_tools._attachment_kind(p_bytes, p_mime_type, p_filename);
+  v_detected := ow_tools._attachment_kind(p_bytes, p_mime_type, p_filename);
 
   SELECT a.slug, m.chat_id INTO v_slug, v_chat_id
-  FROM OpenWorld.messages m JOIN OpenWorld.agents a ON a.id = m.agent_id
+  FROM ow.messages m JOIN ow.agents a ON a.id = m.agent_id
   WHERE m.agent_id = v_agent_id AND m.role = 'user'
   ORDER BY m.id DESC LIMIT 1;
 
-  PERFORM OpenWorld.queue_outbound_attachment(
+  PERFORM ow.queue_outbound_attachment(
     v_slug,
     encode(p_bytes, 'base64'),
     p_kind,
@@ -244,22 +244,22 @@ $$;
 -- options bag. p_key absent or p_options NULL -> p_default; otherwise cast.
 -- A malformed value raises, which run_tool_call_as_role turns into an
 -- 'error: ...' tool result (the model sees it and can retry with valid opts).
-CREATE OR REPLACE FUNCTION OpenWorld_tools._opt_int(p_options jsonb, p_key text, p_default integer)
+CREATE OR REPLACE FUNCTION ow_tools._opt_int(p_options jsonb, p_key text, p_default integer)
 RETURNS integer
 LANGUAGE sql IMMUTABLE AS $$
   SELECT coalesce(nullif(p_options ->> p_key, '')::integer, p_default)
 $$;
-CREATE OR REPLACE FUNCTION OpenWorld_tools._opt_float(p_options jsonb, p_key text, p_default double precision)
+CREATE OR REPLACE FUNCTION ow_tools._opt_float(p_options jsonb, p_key text, p_default double precision)
 RETURNS double precision
 LANGUAGE sql IMMUTABLE AS $$
   SELECT coalesce(nullif(p_options ->> p_key, '')::float8, p_default)
 $$;
-CREATE OR REPLACE FUNCTION OpenWorld_tools._opt_bool(p_options jsonb, p_key text, p_default boolean)
+CREATE OR REPLACE FUNCTION ow_tools._opt_bool(p_options jsonb, p_key text, p_default boolean)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
   SELECT coalesce(nullif(p_options ->> p_key, '')::boolean, p_default)
 $$;
-CREATE OR REPLACE FUNCTION OpenWorld_tools._opt_text(p_options jsonb, p_key text, p_default text)
+CREATE OR REPLACE FUNCTION ow_tools._opt_text(p_options jsonb, p_key text, p_default text)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
   SELECT coalesce(nullif(p_options ->> p_key, ''), p_default)
@@ -270,7 +270,7 @@ $$;
 -- (default) grabs a video frame; 'waveform' renders an audio waveform image.
 -- options (jsonb): thumbnail -> {seconds, format}; waveform ->
 -- {width, height, format, mode}.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_photo(
+CREATE OR REPLACE FUNCTION ow_tools._tool_send_photo(
   p_playlist_id bigint,
   p_transform text DEFAULT 'thumbnail',
   p_options jsonb DEFAULT NULL,
@@ -280,38 +280,38 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_photo(
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, ffmpeg, pg_temp
+SET search_path = ow, ow_tools, ffmpeg, pg_temp
 AS $$
 DECLARE
-  v_media bytea := OpenWorld_tools._hls_media(p_playlist_id);
+  v_media bytea := ow_tools._hls_media(p_playlist_id);
   v_t text := lower(btrim(coalesce(p_transform, 'thumbnail')));
   v_out bytea;
 BEGIN
   IF v_t IN ('', 'thumbnail') THEN
     v_out := ffmpeg.thumbnail(
       v_media,
-      OpenWorld_tools._opt_float(p_options, 'seconds', 0.0),
-      OpenWorld_tools._opt_text(p_options, 'format', 'png'));
+      ow_tools._opt_float(p_options, 'seconds', 0.0),
+      ow_tools._opt_text(p_options, 'format', 'png'));
   ELSIF v_t = 'waveform' THEN
     v_out := ffmpeg.waveform(
       v_media,
-      OpenWorld_tools._opt_int(p_options, 'width', 800),
-      OpenWorld_tools._opt_int(p_options, 'height', 200),
-      OpenWorld_tools._opt_text(p_options, 'format', 'png'),
-      OpenWorld_tools._opt_text(p_options, 'mode', 'waveform'));
+      ow_tools._opt_int(p_options, 'width', 800),
+      ow_tools._opt_int(p_options, 'height', 200),
+      ow_tools._opt_text(p_options, 'format', 'png'),
+      ow_tools._opt_text(p_options, 'mode', 'waveform'));
   ELSE
     RAISE EXCEPTION 'unknown photo transform "%"; use thumbnail or waveform', v_t;
   END IF;
 
-  RETURN OpenWorld_tools._queue_send('photo', v_out, v_t, p_filename, p_caption, p_mime_type);
+  RETURN ow_tools._queue_send('photo', v_out, v_t, p_filename, p_caption, p_mime_type);
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_send_photo(bigint, text, jsonb, text, text, text) IS 'Send a photo (Telegram sendPhoto) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg image op: "thumbnail" (default; grab a video frame — options: seconds, format png|jpeg) or "waveform" (render an audio waveform — options: width, height, format, mode). The frame/waveform is produced server-side; the model only handles the playlist_id.';
+COMMENT ON FUNCTION ow_tools._tool_send_photo(bigint, text, jsonb, text, text, text) IS 'Send a photo (Telegram sendPhoto) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg image op: "thumbnail" (default; grab a video frame — options: seconds, format png|jpeg) or "waveform" (render an audio waveform — options: width, height, format, mode). The frame/waveform is produced server-side; the model only handles the playlist_id.';
 
 -- SEND_VIDEO: reconstruct media from an HLS playlist, optionally transform,
 -- and queue as a video (sendVideo). transform '' / 'raw' (default) sends the
 -- reconstructed media as-is; 'transcode' re-encodes; 'trim' cuts a sub-range.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_video(
+CREATE OR REPLACE FUNCTION ow_tools._tool_send_video(
   p_playlist_id bigint,
   p_transform text DEFAULT '',
   p_options jsonb DEFAULT NULL,
@@ -321,10 +321,10 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_video(
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, ffmpeg, pg_temp
+SET search_path = ow, ow_tools, ffmpeg, pg_temp
 AS $$
 DECLARE
-  v_media bytea := OpenWorld_tools._hls_media(p_playlist_id);
+  v_media bytea := ow_tools._hls_media(p_playlist_id);
   v_t text := lower(btrim(coalesce(p_transform, '')));
   v_out bytea;
 BEGIN
@@ -342,28 +342,28 @@ BEGIN
       audio_codec  := nullif(p_options ->> 'audio_codec', ''),
       audio_filter := nullif(p_options ->> 'audio_filter', ''),
       audio_bitrate:= nullif(p_options ->> 'audio_bitrate', '')::integer,
-      hwaccel      := OpenWorld_tools._opt_bool(p_options, 'hwaccel', false));
+      hwaccel      := ow_tools._opt_bool(p_options, 'hwaccel', false));
   ELSIF v_t = 'trim' THEN
     v_out := ffmpeg.trim(
       v_media,
-      OpenWorld_tools._opt_float(p_options, 'start_time', 0.0),
+      ow_tools._opt_float(p_options, 'start_time', 0.0),
       nullif(p_options ->> 'end_time', '')::float8,
-      OpenWorld_tools._opt_bool(p_options, 'precise', false));
+      ow_tools._opt_bool(p_options, 'precise', false));
   ELSE
     RAISE EXCEPTION 'unknown video transform "%"; use raw, transcode, or trim', v_t;
   END IF;
 
-  RETURN OpenWorld_tools._queue_send('video', v_out, v_t, p_filename, p_caption, p_mime_type);
+  RETURN ow_tools._queue_send('video', v_out, v_t, p_filename, p_caption, p_mime_type);
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_send_video(bigint, text, jsonb, text, text, text) IS 'Send a video (Telegram sendVideo) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg op: "raw"/"" (default; send reconstructed media as-is), "transcode" (re-encode — options: format, filter, codec, preset, crf, bitrate, audio_codec, audio_filter, audio_bitrate, hwaccel), or "trim" (cut a sub-range — options: start_time, end_time, precise). Produced server-side; the model only handles the playlist_id.';
+COMMENT ON FUNCTION ow_tools._tool_send_video(bigint, text, jsonb, text, text, text) IS 'Send a video (Telegram sendVideo) derived from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform selects the ffmpeg op: "raw"/"" (default; send reconstructed media as-is), "transcode" (re-encode — options: format, filter, codec, preset, crf, bitrate, audio_codec, audio_filter, audio_bitrate, hwaccel), or "trim" (cut a sub-range — options: start_time, end_time, precise). Produced server-side; the model only handles the playlist_id.';
 
 -- SEND_AUDIO: reconstruct media from an HLS playlist, extract its audio, and
 -- queue as audio (sendAudio). transform 'extract_audio' (default) pulls the
 -- audio track; giving start_time/end_time additionally trims the extracted
 -- audio to that range. options: format, codec, bitrate, sample_rate, channels,
 -- filter (+ start_time/end_time/precise for the optional trim).
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_audio(
+CREATE OR REPLACE FUNCTION ow_tools._tool_send_audio(
   p_playlist_id bigint,
   p_transform text DEFAULT 'extract_audio',
   p_options jsonb DEFAULT NULL,
@@ -373,10 +373,10 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_send_audio(
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, ffmpeg, pg_temp
+SET search_path = ow, ow_tools, ffmpeg, pg_temp
 AS $$
 DECLARE
-  v_media bytea := OpenWorld_tools._hls_media(p_playlist_id);
+  v_media bytea := ow_tools._hls_media(p_playlist_id);
   v_t text := lower(btrim(coalesce(p_transform, 'extract_audio')));
   v_out bytea;
 BEGIN
@@ -392,20 +392,20 @@ BEGIN
     IF p_options ? 'start_time' OR p_options ? 'end_time' THEN
       v_out := ffmpeg.trim(
         v_out,
-        OpenWorld_tools._opt_float(p_options, 'start_time', 0.0),
+        ow_tools._opt_float(p_options, 'start_time', 0.0),
         nullif(p_options ->> 'end_time', '')::float8,
-        OpenWorld_tools._opt_bool(p_options, 'precise', false));
+        ow_tools._opt_bool(p_options, 'precise', false));
     END IF;
   ELSE
     RAISE EXCEPTION 'unknown audio transform "%"; use extract_audio', v_t;
   END IF;
 
-  RETURN OpenWorld_tools._queue_send('audio', v_out, v_t, p_filename, p_caption, p_mime_type);
+  RETURN ow_tools._queue_send('audio', v_out, v_t, p_filename, p_caption, p_mime_type);
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_send_audio(bigint, text, jsonb, text, text, text) IS 'Send audio (Telegram sendAudio) extracted from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform "extract_audio" (default) pulls the audio track (options: format, codec, bitrate, sample_rate, channels, filter); set start_time/end_time to additionally trim the extracted audio (precise for frame accuracy). Produced server-side; the model only handles the playlist_id.';
+COMMENT ON FUNCTION ow_tools._tool_send_audio(bigint, text, jsonb, text, text, text) IS 'Send audio (Telegram sendAudio) extracted from an HLS playlist. First create the playlist with SELECT ffmpeg.hls(url, segment_duration) via the SQL tool, then pass the returned playlist_id here. transform "extract_audio" (default) pulls the audio track (options: format, codec, bitrate, sample_rate, channels, filter); set start_time/end_time to additionally trim the extracted audio (precise for frame accuracy). Produced server-side; the model only handles the playlist_id.';
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._decode_content(
+CREATE OR REPLACE FUNCTION ow_tools._decode_content(
   p_content text,
   p_encoding text
 )
@@ -434,7 +434,7 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._url_decode(p_text text)
+CREATE OR REPLACE FUNCTION ow_tools._url_decode(p_text text)
 RETURNS text
 LANGUAGE plpgsql
 IMMUTABLE
@@ -465,7 +465,7 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._url_encode(p_text text)
+CREATE OR REPLACE FUNCTION ow_tools._url_encode(p_text text)
 RETURNS text
 LANGUAGE plpgsql
 IMMUTABLE
@@ -501,7 +501,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._html_text(p_html text)
+CREATE OR REPLACE FUNCTION ow_tools._html_text(p_html text)
 RETURNS text
 LANGUAGE plpgsql
 IMMUTABLE
@@ -521,7 +521,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._http_url_allowed(p_url text)
+CREATE OR REPLACE FUNCTION ow_tools._http_url_allowed(p_url text)
 RETURNS boolean
 LANGUAGE plpgsql
 IMMUTABLE
@@ -568,7 +568,7 @@ $$;
 -- the check is immune to standard_conforming_strings. A genuine text value that
 -- is exactly backslash-x + even-length lowercase hex would also be redacted —
 -- vanishingly rare, and it only costs a marker.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._redact_bytea_json(p_value jsonb, p_key text DEFAULT NULL)
+CREATE OR REPLACE FUNCTION ow_tools._redact_bytea_json(p_value jsonb, p_key text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 IMMUTABLE
@@ -596,12 +596,12 @@ BEGIN
       RETURN p_value;
     WHEN 'object' THEN
       RETURN (
-        SELECT coalesce(jsonb_object_agg(key, OpenWorld_tools._redact_bytea_json(value, key)), '{}'::jsonb)
+        SELECT coalesce(jsonb_object_agg(key, ow_tools._redact_bytea_json(value, key)), '{}'::jsonb)
         FROM jsonb_each(p_value)
       );
     WHEN 'array' THEN
       RETURN (
-        SELECT coalesce(jsonb_agg(OpenWorld_tools._redact_bytea_json(value, NULL) ORDER BY ordinality), '[]'::jsonb)
+        SELECT coalesce(jsonb_agg(ow_tools._redact_bytea_json(value, NULL) ORDER BY ordinality), '[]'::jsonb)
         FROM jsonb_array_elements(p_value) WITH ORDINALITY AS arr(value, ordinality)
       );
     ELSE
@@ -610,7 +610,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_sql(p_query text)
+CREATE OR REPLACE FUNCTION ow_tools._tool_sql(p_query text)
 RETURNS text
 LANGUAGE plpgsql
 AS $$
@@ -639,7 +639,7 @@ BEGIN
 
   -- Strip bytea-derived hex (binary columns / inline ffmpeg.* outputs) so it
   -- never reaches the LLM via the tool result. See _redact_bytea_json.
-  v_rows := OpenWorld_tools._redact_bytea_json(coalesce(v_rows, '[]'::jsonb));
+  v_rows := ow_tools._redact_bytea_json(coalesce(v_rows, '[]'::jsonb));
 
   RETURN jsonb_pretty(jsonb_build_object(
     'rows', coalesce(v_rows, '[]'::jsonb),
@@ -647,7 +647,7 @@ BEGIN
   ));
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_sql(text) IS 'Run one SQL query inside PostgreSQL. A single trailing semicolon is tolerated; multiple statements are rejected. The query must return rows. For writes, use a data-modifying CTE with RETURNING.';
+COMMENT ON FUNCTION ow_tools._tool_sql(text) IS 'Run one SQL query inside PostgreSQL. A single trailing semicolon is tolerated; multiple statements are rejected. The query must return rows. For writes, use a data-modifying CTE with RETURNING.';
 
 -- BASH: run a shell command on a remote host registered in ssh.hosts (the pg_ssh
 -- catalog). ssh.exec is SECURITY DEFINER, owned by the postgres superuser
@@ -668,7 +668,7 @@ COMMENT ON FUNCTION OpenWorld_tools._tool_sql(text) IS 'Run one SQL query inside
 -- no insertion-order column, so "first" is host_name-ascending (deterministic);
 -- in the usual single-host deployment there is only one row. Returns NULL when
 -- no host is registered, in which case _tool_bash raises.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._default_ssh_host()
+CREATE OR REPLACE FUNCTION ow_tools._default_ssh_host()
 RETURNS text
 LANGUAGE sql
 SECURITY DEFINER
@@ -678,13 +678,13 @@ AS $$
   SELECT host_name FROM ssh.hosts ORDER BY host_name LIMIT 1;
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_bash(
+CREATE OR REPLACE FUNCTION ow_tools._tool_bash(
   p_command text,
   p_host text DEFAULT ''
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_command text := coalesce(p_command, '');
@@ -700,7 +700,7 @@ BEGIN
   -- No host specified: use the first entry in ssh.hosts (resolved superuser-side
   -- by _default_ssh_host; ssh.hosts itself is unreadable by the acting role).
   IF v_host = '' THEN
-    v_host := OpenWorld_tools._default_ssh_host();
+    v_host := ow_tools._default_ssh_host();
     IF v_host IS NULL THEN
       RAISE EXCEPTION 'BASH requires host (no SSH hosts registered in ssh.hosts)';
     END IF;
@@ -721,10 +721,10 @@ BEGIN
   )::text;
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_bash(text, text) IS 'Run a shell command on a remote host over SSH and return stdout, stderr, and exit_code. host is optional and defaults to the first entry in ssh.hosts when omitted; the host must already be registered in ssh.hosts.';
+COMMENT ON FUNCTION ow_tools._tool_bash(text, text) IS 'Run a shell command on a remote host over SSH and return stdout, stderr, and exit_code. host is optional and defaults to the first entry in ssh.hosts when omitted; the host must already be registered in ssh.hosts.';
 
 -- Build the result text of a WEBFETCH from its http response (no append).
-CREATE OR REPLACE FUNCTION OpenWorld_tools._webfetch_result(
+CREATE OR REPLACE FUNCTION ow_tools._webfetch_result(
   p_args jsonb,
   p_http_response jsonb
 )
@@ -753,7 +753,7 @@ END;
 $$;
 
 -- Build the result text of a SEARCH from its Exa JSON http response (no append).
-CREATE OR REPLACE FUNCTION OpenWorld_tools._search_result(
+CREATE OR REPLACE FUNCTION ow_tools._search_result(
   p_args jsonb,
   p_http_response jsonb
 )
@@ -766,7 +766,7 @@ DECLARE
   v_row jsonb;
   v_results jsonb := '[]'::jsonb;
 BEGIN
-  v_body := OpenWorld._try_jsonb(coalesce(p_http_response->>'body', ''));
+  v_body := ow._try_jsonb(coalesce(p_http_response->>'body', ''));
 
   -- Gracefully surface a non-JSON / unexpected Exa body instead of crashing the
   -- turn (e.g. bad key -> 401, or a stray HTML error page). _try_jsonb never
@@ -803,13 +803,13 @@ $$;
 -- Build the SEARCH future (a df http graph) against the Exa search API. Returns
 -- the graph text, or an error result text when the query is empty or the agent
 -- has no exa_api_key. Introspected as the SEARCH tool schema.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_search(
+CREATE OR REPLACE FUNCTION ow_tools._tool_search(
   p_query text,
   p_limit integer DEFAULT 5
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_limit integer := least(greatest(coalesce(p_limit, 5), 1), 10);
@@ -824,8 +824,8 @@ BEGIN
   -- Agent context reaches the tool via GUC (there are no agent params: the
   -- signature is introspected as the LLM-facing schema). start_tool_calls binds
   -- it for this path; the agent role can SELECT its own secret config under RLS.
-  v_agent_id := nullif(current_setting('OpenWorld.current_agent_id', true), '')::bigint;
-  v_key := OpenWorld._config_text(v_agent_id, 'exa_api_key');
+  v_agent_id := nullif(current_setting('ow.current_agent_id', true), '')::bigint;
+  v_key := ow._config_text(v_agent_id, 'exa_api_key');
   IF v_key IS NULL OR v_key = '' THEN
     RETURN format('SELECT %L::text AS result', 'error: SEARCH requires exa_api_key config');
   END IF;
@@ -843,50 +843,50 @@ BEGIN
       30
     ) |=> 'http'
     ~> format(
-      'SELECT OpenWorld_tools._search_result(%L::jsonb, $http::jsonb)::text AS result',
+      'SELECT ow_tools._search_result(%L::jsonb, $http::jsonb)::text AS result',
       jsonb_build_object('query', p_query, 'limit', v_limit)::text
     );
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_search(text, integer) IS 'Search the public web and return a JSON list of result titles, URLs, and snippets.';
+COMMENT ON FUNCTION ow_tools._tool_search(text, integer) IS 'Search the public web and return a JSON list of result titles, URLs, and snippets.';
 
 -- Build the WEBFETCH future (a df http graph). Returns the graph text, or an
 -- error result text for non-public URLs. Introspected as the WEBFETCH tool schema.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._tool_webfetch(
+CREATE OR REPLACE FUNCTION ow_tools._tool_webfetch(
   p_url text,
   p_max_bytes integer DEFAULT 20000
 )
 RETURNS text
 LANGUAGE plpgsql
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 BEGIN
-  IF NOT OpenWorld_tools._http_url_allowed(p_url) THEN
+  IF NOT ow_tools._http_url_allowed(p_url) THEN
     RETURN format('SELECT %L::text AS result', 'error: WEBFETCH requires a public http(s) URL');
   END IF;
 
   RETURN df.http(
     p_url, 'GET', '',
     jsonb_build_object(
-      'User-Agent', 'OpenWorld-webfetch/1.0',
+      'User-Agent', 'ow-webfetch/1.0',
       'Accept', 'text/html,application/xhtml+xml,application/xml,text/plain,*/*;q=0.8'
     ), 30
   ) |=> 'http'
     ~> format(
-      'SELECT OpenWorld_tools._webfetch_result(%L::jsonb, $http::jsonb)::text AS result',
+      'SELECT ow_tools._webfetch_result(%L::jsonb, $http::jsonb)::text AS result',
       jsonb_build_object('url', p_url, 'max_bytes', p_max_bytes)::text
     );
 END;
 $$;
-COMMENT ON FUNCTION OpenWorld_tools._tool_webfetch(text, integer) IS 'Fetch an HTTP or HTTPS URL and return status, content type, effective URL, and a truncated text body.';
+COMMENT ON FUNCTION ow_tools._tool_webfetch(text, integer) IS 'Fetch an HTTP or HTTPS URL and return status, content type, effective URL, and a truncated text body.';
 
 -- Run one synchronous tool's WORK under the acting role (SET ROLE + GUCs), then
 -- RESET. SECURITY INVOKER — SET ROLE is forbidden inside SECURITY DEFINER. The
--- instance that calls this is submitted by OpenWorld_service; we drop to the
+-- instance that calls this is submitted by ow_service; we drop to the
 -- acting role (the requesting user's tier, or the sidecar role) so RLS
 -- binds for the tool's data access. Returns the result text; the orchestrator
 -- appends the role='tool' message as service.
-CREATE OR REPLACE FUNCTION OpenWorld_tools.run_tool_call_as_role(
+CREATE OR REPLACE FUNCTION ow_tools.run_tool_call_as_role(
   p_name text,
   p_args jsonb,
   p_acting_role text,
@@ -899,48 +899,48 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools.run_tool_call_as_role(
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_result text;
   v_err text;
 BEGIN
   EXECUTE format('SET ROLE %I', p_acting_role);
-  PERFORM set_config('OpenWorld.current_agent_id', p_agent_id::text, true);
-  PERFORM set_config('OpenWorld.current_chat_id', coalesce(p_chat_id, ''), true);
-  PERFORM set_config('OpenWorld.current_user_id', coalesce(p_user_id::text, ''), true);
+  PERFORM set_config('ow.current_agent_id', p_agent_id::text, true);
+  PERFORM set_config('ow.current_chat_id', coalesce(p_chat_id, ''), true);
+  PERFORM set_config('ow.current_user_id', coalesce(p_user_id::text, ''), true);
   BEGIN
     -- Agent context reaches the tool functions via GUCs (they no longer take an
     -- agent_id/agent_slug param, so every parameter is LLM-facing & introspectable).
     v_result := CASE p_name
-      WHEN 'SQL' THEN OpenWorld_tools._tool_sql(coalesce(p_args->>'query', ''))
-      WHEN 'BASH' THEN OpenWorld_tools._tool_bash(
+      WHEN 'SQL' THEN ow_tools._tool_sql(coalesce(p_args->>'query', ''))
+      WHEN 'BASH' THEN ow_tools._tool_bash(
             coalesce(p_args->>'command', ''),
             coalesce(p_args->>'host', ''))
-      WHEN 'SEND_ATTACHMENT' THEN OpenWorld_tools._tool_send_attachment(
+      WHEN 'SEND_ATTACHMENT' THEN ow_tools._tool_send_attachment(
             coalesce(p_args->>'content', ''),
             coalesce(p_args->>'encoding', ''),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
-      WHEN 'SEND_PHOTO' THEN OpenWorld_tools._tool_send_photo(
+      WHEN 'SEND_PHOTO' THEN ow_tools._tool_send_photo(
             nullif(p_args->>'playlist_id', '')::bigint,
             coalesce(p_args->>'transform', 'thumbnail'),
-            OpenWorld._try_jsonb(coalesce(p_args->>'options', '')),
+            ow._try_jsonb(coalesce(p_args->>'options', '')),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
-      WHEN 'SEND_VIDEO' THEN OpenWorld_tools._tool_send_video(
+      WHEN 'SEND_VIDEO' THEN ow_tools._tool_send_video(
             nullif(p_args->>'playlist_id', '')::bigint,
             coalesce(p_args->>'transform', ''),
-            OpenWorld._try_jsonb(coalesce(p_args->>'options', '')),
+            ow._try_jsonb(coalesce(p_args->>'options', '')),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
-      WHEN 'SEND_AUDIO' THEN OpenWorld_tools._tool_send_audio(
+      WHEN 'SEND_AUDIO' THEN ow_tools._tool_send_audio(
             nullif(p_args->>'playlist_id', '')::bigint,
             coalesce(p_args->>'transform', 'extract_audio'),
-            OpenWorld._try_jsonb(coalesce(p_args->>'options', '')),
+            ow._try_jsonb(coalesce(p_args->>'options', '')),
             coalesce(p_args->>'filename', ''),
             coalesce(p_args->>'caption', ''),
             coalesce(p_args->>'mime_type', ''))
@@ -963,7 +963,7 @@ $$;
 -- Build the df future for one tool call (the body of its tc instance).
 -- SEARCH/WEBFETCH become an http graph; the rest run synchronously as the
 -- acting role. Returns a df graph text.
-CREATE OR REPLACE FUNCTION OpenWorld_tools.tool_call_future(
+CREATE OR REPLACE FUNCTION ow_tools.tool_call_future(
   p_name text,
   p_args jsonb,
   p_acting_role text,
@@ -976,7 +976,7 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools.tool_call_future(
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_limit text;
@@ -985,13 +985,13 @@ BEGIN
   IF p_name = 'WEBFETCH' THEN
     -- Safe integer parse: a malformed max_bytes must not abort the whole turn.
     v_max_bytes := p_args->>'max_bytes';
-    RETURN OpenWorld_tools._tool_webfetch(
+    RETURN ow_tools._tool_webfetch(
       btrim(coalesce(p_args->>'url', '')),
       CASE WHEN v_max_bytes ~ '^[0-9]+$' THEN v_max_bytes::integer ELSE 20000 END
     );
   ELSIF p_name = 'SEARCH' THEN
     v_limit := p_args->>'limit';
-    RETURN OpenWorld_tools._tool_search(
+    RETURN ow_tools._tool_search(
       coalesce(p_args->>'query', ''),
       CASE WHEN v_limit ~ '^[0-9]+$' THEN v_limit::integer ELSE 5 END
     );
@@ -999,7 +999,7 @@ BEGIN
 
   -- synchronous tools run as the acting role
   RETURN format(
-    'SELECT OpenWorld_tools.run_tool_call_as_role(%L, %L::jsonb, %L, %s, %L, %L, %L, %s)::text AS result',
+    'SELECT ow_tools.run_tool_call_as_role(%L, %L::jsonb, %L, %s, %L, %L, %L, %s)::text AS result',
     p_name, p_args::text, p_acting_role, p_agent_id, p_agent_slug,
     coalesce(p_user_external_id, ''), coalesce(p_chat_id, ''),
     coalesce(p_user_id::text, 'NULL')
@@ -1017,7 +1017,7 @@ $$;
 --   await_tool_calls: poll df.status per call (cancel on timeout) and append each
 --     result as role='tool'. Runs in the NEXT node, by which point the starts are
 --     committed and the tool instances are executing on other workers.
-CREATE OR REPLACE FUNCTION OpenWorld_tools.start_tool_calls(
+CREATE OR REPLACE FUNCTION ow_tools.start_tool_calls(
   p_agent_slug text,
   p_message_id bigint,
   p_tool_calls jsonb,
@@ -1029,10 +1029,10 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools.start_tool_calls(
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_call jsonb;
   v_tool_call_id text;
   v_name text;
@@ -1044,10 +1044,10 @@ BEGIN
   -- Bind agent context so the SEARCH graph builder (_tool_search) can read the
   -- agent's own secret config (exa_api_key) under RLS. The synchronous tools
   -- bind it again inside run_tool_call_as_role; setting it here is harmless.
-  PERFORM set_config('OpenWorld.current_agent_id', v_agent_id::text, true);
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
 
   IF p_acting_role IS NULL OR p_acting_role = '' THEN
-    p_acting_role := 'OpenWorld_agent_primary';
+    p_acting_role := 'ow_agent_primary';
   END IF;
 
   -- start every tool call as its own instance (all started before any awaiting)
@@ -1055,12 +1055,12 @@ BEGIN
   LOOP
     v_tool_call_id := coalesce(v_call->>'id', 'call_' || md5(v_call::text));
     v_name := v_call #>> '{function,name}';
-    v_args := OpenWorld._try_jsonb(v_call #>> '{function,arguments}');
-    v_future := OpenWorld_tools.tool_call_future(
+    v_args := ow._try_jsonb(v_call #>> '{function,arguments}');
+    v_future := ow_tools.tool_call_future(
       v_name, v_args, p_acting_role, v_agent_id, p_agent_slug,
       p_user_external_id, p_chat_id, p_user_id
     );
-    SELECT df.start(v_future, format('OpenWorld:tool:%s:%s', p_message_id, v_tool_call_id)) INTO v_tc;
+    SELECT df.start(v_future, format('ow:tool:%s:%s', p_message_id, v_tool_call_id)) INTO v_tc;
     v_started := v_started || jsonb_build_array(
       jsonb_build_object('id', v_tc, 'tc_id', v_tool_call_id)
     );
@@ -1072,7 +1072,7 @@ $$;
 
 -- Strip pg_durable's df.result() envelope to recover a tool call's own result
 -- text. Each tool call runs as a one-node graph whose body is
--- `SELECT OpenWorld_tools.run_tool_call_as_role(...)::text AS result`, and df.result()
+-- `SELECT ow_tools.run_tool_call_as_role(...)::text AS result`, and df.result()
 -- exposes a node's terminal SELECT wrapped as {"rows":[{<cols>}],"row_count":N}.
 -- So the single row comes back as {"rows":[{"result": <text>}],"row_count":1},
 -- with the tool's actual output (_tool_sql's {"rows":...,"row_count":...}, BASH
@@ -1085,15 +1085,15 @@ $$;
 -- raised and the caller stored an 'error: ...' string, or a non-JSON value) is
 -- returned unchanged. Pure (IMMUTABLE) so it can be unit-tested without df.start,
 -- which the test harness can't run.
-CREATE OR REPLACE FUNCTION OpenWorld_tools._unwrap_tool_result(p_result text)
+CREATE OR REPLACE FUNCTION ow_tools._unwrap_tool_result(p_result text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
 AS $$
-  SELECT coalesce(OpenWorld._try_jsonb(p_result) #>> '{rows,0,result}', p_result)
+  SELECT coalesce(ow._try_jsonb(p_result) #>> '{rows,0,result}', p_result)
 $$;
 
-CREATE OR REPLACE FUNCTION OpenWorld_tools.await_tool_calls(
+CREATE OR REPLACE FUNCTION ow_tools.await_tool_calls(
   p_agent_slug text,
   p_started text,
   p_timeout integer DEFAULT 120
@@ -1101,10 +1101,10 @@ CREATE OR REPLACE FUNCTION OpenWorld_tools.await_tool_calls(
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = OpenWorld, OpenWorld_tools, public, pg_temp
+SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
-  v_agent_id bigint := OpenWorld.agent_id(p_agent_slug);
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_item jsonb;
   v_id text;
   v_tcid text;
@@ -1114,7 +1114,7 @@ DECLARE
   v_count integer := 0;
 BEGIN
   FOR v_item IN SELECT value FROM jsonb_array_elements(
-    coalesce(OpenWorld._try_jsonb(p_started), '[]'::jsonb)
+    coalesce(ow._try_jsonb(p_started), '[]'::jsonb)
   )
   LOOP
     v_count := v_count + 1;
@@ -1144,7 +1144,7 @@ BEGIN
 
     BEGIN
       SELECT df.result(v_id) INTO v_result;
-      v_result := OpenWorld_tools._unwrap_tool_result(v_result);
+      v_result := ow_tools._unwrap_tool_result(v_result);
     EXCEPTION WHEN OTHERS THEN
       v_result := 'error: ' || SQLERRM;
     END;
@@ -1152,7 +1152,7 @@ BEGIN
       v_result := coalesce(v_result, 'error: tool ' || v_status);
     END IF;
 
-    PERFORM OpenWorld_tools._append_tool_message(v_agent_id, v_tcid, v_result);
+    PERFORM ow_tools._append_tool_message(v_agent_id, v_tcid, v_result);
   END LOOP;
 
   RETURN jsonb_build_object('tool_calls', v_count)::text;

@@ -5,7 +5,7 @@ import Security
 /// in the Keychain as a generic password. Both are mirrored into static vars
 /// on load so the synchronous APIClient can read them without awaiting.
 enum Credentials {
-    private static let baseURLKey = "OpenWorld_dashboard_base_url"
+    private static let baseURLKey = "ow_dashboard_base_url"
     private static let service = "OpenWorld-dashboard"
     private static let account = "token"
 
