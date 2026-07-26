@@ -1,5 +1,5 @@
 # XcodeGen generates the Xcode project from project.yml — don't commit it.
-# Run `xcodegen generate` to materialize AttobotDashboard.xcodeproj.
+# Run `xcodegen generate` to materialize OpenWorldDashboard.xcodeproj.
 *.xcodeproj
 *.xcworkspace
 build/

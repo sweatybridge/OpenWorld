@@ -12,7 +12,8 @@ name: native-clients
 
 on:
   push:
-    branches: [develop, master]
+    branches:
+      - develop
     paths:
       - "dashboard/ios/**"
       - "dashboard/android/**"
@@ -51,8 +52,8 @@ jobs:
           set -euo pipefail
           xcrun xcodebuild -version
           xcodebuild \
-            -project AttobotDashboard.xcodeproj \
-            -scheme AttobotDashboard \
+            -project OpenWorldDashboard.xcodeproj \
+            -scheme OpenWorldDashboard \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \

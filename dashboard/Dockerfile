@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Multi-stage build for the attobot admin dashboard.
+# Multi-stage build for the OpenWorld admin dashboard.
 #   1. build the React SPA (Vite)        -> /web/dist
 #   2. build the Fastify server (tsc)    -> /app/dist
 #   3. minimal runtime: node + server bundle + prod deps + static SPA

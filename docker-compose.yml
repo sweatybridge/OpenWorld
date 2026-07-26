@@ -5,11 +5,11 @@ services:
       target: harness
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${OPENWORLD_POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
-      - attobot_pgdata:/var/lib/postgresql
+      - harness_pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
       interval: 5s
@@ -26,39 +26,39 @@ services:
     environment:
       PGHOST: harness
       PGUSER: postgres
-      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGPASSWORD: ${OPENWORLD_POSTGRES_PASSWORD:-postgres}
     volumes:
-      - ./agents.sql:/attobot/agents.sql:ro
+      - ./agents.sql:/ow/agents.sql:ro
       - authorized_keys:/root/.ssh:rw
     command:
       - psql
       - --no-psqlrc
       - --single-transaction
       - --set=ON_ERROR_STOP=1
-      - --set=api_key=${ATTOBOT_API_KEY:-}
-      - --set=exa_api_key=${ATTOBOT_EXA_API_KEY:-}
-      - --set=model=${ATTOBOT_MODEL:-deepseek-v4-pro}
-      - --set=api_base=${ATTOBOT_API_BASE:-https://api.deepseek.com/v1}
-      - --set=temperature=${ATTOBOT_TEMPERATURE:-1.0}
-      - --set=reasoning_effort=${ATTOBOT_REASONING_EFFORT:-medium}
-      - --set=context_tokens=${ATTOBOT_CONTEXT_TOKENS:-1000000}
-      - --set=multimodal_support=${ATTOBOT_MULTIMODAL_SUPPORT:-false}
-      - --set=telegram_token=${ATTOBOT_TELEGRAM_TOKEN:-}
-      - --set=telegram_chat_id=${ATTOBOT_TELEGRAM_CHAT_ID:-}
-      - --set=telegram_thread_id=${ATTOBOT_TELEGRAM_THREAD_ID:-}
-      - --set=telegram_api_base=${ATTOBOT_TELEGRAM_API_BASE:-https://api.telegram.org}
-      - --set=telegram_poll_timeout=${ATTOBOT_TELEGRAM_POLL_TIMEOUT:-60}
-      - --set=dashboard_db_password=${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
-      - --set=ssh_host=${ATTOBOT_SSH_HOST:-}
-      - --set=ssh_port=${ATTOBOT_SSH_PORT:-22}
-      - --set=ssh_user=${ATTOBOT_SSH_USER:-}
-      - --set=ssh_host_name=${ATTOBOT_SSH_HOST_NAME:-default}
-      - --set=ssh_fp=${ATTOBOT_SSH_HOST_KEY_FINGERPRINT:-}
-      - --file=/attobot/agents.sql
+      - --set=api_key=${OPENWORLD_API_KEY:-}
+      - --set=exa_api_key=${OPENWORLD_EXA_API_KEY:-}
+      - --set=model=${OPENWORLD_MODEL:-Gemma4-26B-A4B}
+      - --set=api_base=${OPENWORLD_API_BASE:-http://localhost:11434/v1}
+      - --set=temperature=${OPENWORLD_TEMPERATURE:-1.0}
+      - --set=reasoning_effort=${OPENWORLD_REASONING_EFFORT:-medium}
+      - --set=context_tokens=${OPENWORLD_CONTEXT_TOKENS:-131072}
+      - --set=multimodal_support=${OPENWORLD_MULTIMODAL_SUPPORT:-true}
+      - --set=telegram_token=${OPENWORLD_TELEGRAM_TOKEN:-}
+      - --set=telegram_chat_id=${OPENWORLD_TELEGRAM_CHAT_ID:-}
+      - --set=telegram_thread_id=${OPENWORLD_TELEGRAM_THREAD_ID:-}
+      - --set=telegram_api_base=${OPENWORLD_TELEGRAM_API_BASE:-https://api.telegram.org}
+      - --set=telegram_poll_timeout=${OPENWORLD_TELEGRAM_POLL_TIMEOUT:-60}
+      - --set=dashboard_db_password=${OPENWORLD_DASHBOARD_PASSWORD:-dashboard}
+      - --set=ssh_host=${OPENWORLD_SSH_HOST:-sshd}
+      - --set=ssh_port=${OPENWORLD_SSH_PORT:-2222}
+      - --set=ssh_user=${OPENWORLD_SSH_USER:-ow}
+      - --set=ssh_host_name=${OPENWORLD_SSH_HOST_NAME:-default}
+      - --set=ssh_fp=${OPENWORLD_SSH_HOST_KEY_FINGERPRINT:-}
+      - --file=/ow/agents.sql
       - --quiet
 
-  # Read-only admin dashboard for pg_durable workflows + attobot domain.
-  # View-only: the attobot_dashboard DB role has only SELECT/EXECUTE grants, so
+  # Read-only admin dashboard for pg_durable workflows + ow domain.
+  # View-only: the ow_dashboard DB role has only SELECT/EXECUTE grants, so
   # writes fail at the database even if the API layer had a bug.
   dashboard:
     build:
@@ -73,13 +73,13 @@ services:
       PGHOST: harness
       PGPORT: 5432
       PGDATABASE: postgres
-      PGUSER: attobot_dashboard
-      PGPASSWORD: ${ATTOBOT_DASHBOARD_DB_PASSWORD:-dashboard}
+      PGUSER: ow_dashboard
+      PGPASSWORD: ${OPENWORLD_DASHBOARD_PASSWORD:-dashboard}
       PORT: 8088
-      # Set ATTOBOT_DASHBOARD_TOKEN to require `Authorization: Bearer <token>`.
+      # Set OPENWORLD_DASHBOARD_TOKEN to require `Authorization: Bearer ***
       # The port is published on all interfaces (0.0.0.0) so mobile clients on the
       # LAN — or over Tailscale — can reach it. Strongly set a token when exposing.
-      DASHBOARD_TOKEN: ${ATTOBOT_DASHBOARD_TOKEN:-}
+      DASHBOARD_TOKEN: ${OPENWORLD_DASHBOARD_TOKEN:-}
     ports:
       - "8088:8088"
     healthcheck:
@@ -101,7 +101,7 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Etc/UTC
-      - USER_NAME=attobot
+      - USER_NAME=${OPENWORLD_SSH_USER:-ow}
       - PUBLIC_KEY_DIR=/etc/authorized_keys
     volumes:
       - authorized_keys:/etc/authorized_keys:ro
@@ -109,5 +109,5 @@ services:
       - "2222:2222"
 
 volumes:
-  attobot_pgdata:
+  harness_pgdata:
   authorized_keys:

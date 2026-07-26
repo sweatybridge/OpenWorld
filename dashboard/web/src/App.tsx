@@ -61,7 +61,7 @@ function TokenGate({ onSaved }: { onSaved: () => void }) {
         />
         <button className="btn" type="submit">Unlock</button>
         <p>
-          The server has <code>ATTOBOT_DASHBOARD_TOKEN</code> set. The token is stored
+          The server has <code>OPENWORLD_DASHBOARD_TOKEN</code> set. The token is stored
           in this browser's localStorage and sent as <code>Authorization: Bearer</code>.
         </p>
       </form>
@@ -86,7 +86,7 @@ function Shell() {
   return (
     <div className="layout">
       <nav className="topnav">
-        <Link to="/" className="brand">attobot<span> · dashboard</span></Link>
+        <Link to="/" className="brand">OpenWorld<span> · dashboard</span></Link>
         {NAV.map(([to, label]) => (
           <NavLink key={to} to={to} end={to === "/"}>{label}</NavLink>
         ))}

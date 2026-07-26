@@ -1,7 +1,7 @@
 import pg from "pg";
 import { config } from "./config.js";
 
-// Single shared pool. The attobot_dashboard role is BYPASSRLS + SELECT/EXECUTE
+// Single shared pool. The ow_dashboard role is BYPASSRLS + SELECT/EXECUTE
 // only, so this connection can read everything but write nothing.
 export const pool = new pg.Pool({
   host: config.pg.host,

@@ -1,9 +1,9 @@
 # Architecture
 
-attobot is a Postgres-resident agent harness. Agent state, turns, tool calls,
+ow is a Postgres-resident agent harness. Agent state, turns, tool calls,
 memory, and outbound delivery all live in PostgreSQL tables under the
-`attobot` schema. Agents point
-at shared rows in `attobot.models`, so multiple agents can reuse the same model
+`ow` schema. Agents point
+at shared rows in `ow.models`, so multiple agents can reuse the same model
 configuration. `pg_durable` owns the durable workflow execution, so a turn can
 survive database restarts and resume from its last checkpoint.
 
@@ -23,17 +23,17 @@ Postgres. The only other container is the one-shot `agent-init` seed job.
 ## Least-Privilege Access Matrix
 
 "own agent" for an agent role =
-`agent_id = current_setting('attobot.current_agent_id')::bigint`.
+`agent_id = current_setting('ow.current_agent_id')::bigint`.
 "own chat" for a telegram user =
-`"own agent" AND chat_id = current_setting('attobot.current_chat_id')`.
+`"own agent" AND chat_id = current_setting('ow.current_chat_id')`.
 
 Each agent's **loop** (compose, model call, record, orchestrate) runs as that
 agent's own role - fixed, trusted code that needs the api_key, so the agent role
 reads its own config including secrets. **Tool calls** drop out of the loop role
 into a narrower scope: the requesting user's tier (`anonymous`/`authenticated`)
-for primary, and `attobot_service` for the subconscious. The intent is that no
+for primary, and `ow_service` for the sidecar. The intent is that no
 LLM-authored SQL runs with secret access, and that is now enforced for both tool
-scopes (the user tiers and `attobot_service`, the latter via the non-secret
+scopes (the user tiers and `ow_service`, the latter via the non-secret
 `config_public` view). See `docs/abac-rls-security-design.md` for the full design and
 `tests/pgtap/` for the enforced matrix (the executable source of truth).
 
@@ -50,14 +50,14 @@ It cannot delete `messages`,
 to the requesting user's tier, which cannot read secrets. A running loop may be
 interrupted or cancelled.
 
-The subconscious agent role runs its loop the same way (reading its own secrets
+The sidecar agent role runs its loop the same way (reading its own secrets
 to call its model). As its own role it sees its own `messages`, every agent's
 `memory` and `memory_sources` (full CRUD, to review and correct them), its own
 `config`, and all `users` (read-only). Its tool calls drop to
-`attobot_service`, a broad `BYPASSRLS` scope that reads non-secret `config` only
+`ow_service`, a broad `BYPASSRLS` scope that reads non-secret `config` only
 (via the `config_public` view, so secrets stay out of the LLM SQL scope).
 
-| Table | `anonymous` | `authenticated` | `agent_primary` | `agent_subconscious` | `service` |
+| Table | `anonymous` | `authenticated` | `agent_primary` | `agent_sidecar` | `service` |
 |---|---|---|---|---|---|
 | `agents` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
 | `models` | SELECT | SELECT | SELECT | SELECT | SELECT; writer (I/U/D) |
@@ -67,7 +67,7 @@ to call its model). As its own role it sees its own `messages`, every agent's
 | `config` | SELECT non-secret own | SELECT non-secret own | SELECT own (incl. secrets); I/U own | SELECT own (incl. secrets); I/U own | non-secret only (`config_public` view) |
 | `users` | SELECT own row | SELECT own row | SELECT all; INSERT/UPDATE | SELECT all (writes RLS-denied) | ALL |
 
-The `attobot_dashboard` role (the admin dashboard's DB principal) is `BYPASSRLS`
+The `ow_dashboard` role (the admin dashboard's DB principal) is `BYPASSRLS`
 with `SELECT`/`EXECUTE` only across these tables - it sees every row but can
 never write; secret values are redacted by the dashboard API, not by the
 database. The matrix above is enforced and exercised end-to-end by the pgTAP
@@ -79,11 +79,11 @@ Two least-privilege decisions:
   `secret = true` config (`api_key`, `telegram_token`) - but only from fixed loop
   code that needs the key to call the model. Neither LLM-SQL tool scope can read
   secrets: the user tier (`anonymous`/`authenticated`, primary's tool scope) has
-  SELECT on non-secret own rows only, and `attobot_service` (the subconscious's
+  SELECT on non-secret own rows only, and `ow_service` (the sidecar's
   tool scope) has no grant on the base `config` table at all - it reads non-secret
   rows only through the `config_public` view, so its `BYPASSRLS` flag is irrelevant
   for secrets (no grant -> no rows). Today only the superuser and
-  `attobot_dashboard` see secrets directly (the dashboard API redacts them).
+  `ow_dashboard` see secrets directly (the dashboard API redacts them).
 - **`messages` SELECT is chat-wide for users; users never write.** The whole
   conversation belongs to one configured chat = one agent, so a user sees all of
   it (including other users' messages and the agent's replies). Anonymous and
@@ -108,4 +108,4 @@ The image also installs `pg-ssh-pg18_0.3.0-1_trixie_<arch>.deb` from the
 
 The `harness` service uses this image. The `agent-init` service uses the stock
 Postgres client image, mounts `agents.sql` read-only, waits for `harness` to be
-healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/attobot/agents.sql`.
+healthy, and runs `psql --no-psqlrc --single-transaction --set=ON_ERROR_STOP=1 --set=... --file=/ow/agents.sql`.

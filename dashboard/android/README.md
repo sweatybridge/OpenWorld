@@ -1,4 +1,4 @@
-# attobot dashboard — Android client
+# OpenWorld dashboard — Android client
 
 A native Kotlin / Jetpack Compose port of the `dashboard/web` admin console. It
 talks to the **same read-only `/api/*`** endpoints as the web app and is gated by
@@ -40,15 +40,15 @@ dashboard/android/
     proguard-rules.pro
     src/main/AndroidManifest.xml
     src/main/res/...                # values, xml configs, XML launcher icon
-    src/main/java/com/attobot/dashboard/
+    src/main/java/com/OpenWorld/dashboard/
       DashboardApp.kt               # Application: owns the ApiProvider + Credentials singletons
-      MainActivity.kt               # setContent { AttobotTheme { Root() } }
-      core/    AttobotApi.kt (Retrofit + ApiProvider), Models.kt, Credentials.kt,
+      MainActivity.kt               # setContent { OpenWorldTheme { Root() } }
+      core/    OpenWorldApi.kt (Retrofit + ApiProvider), Models.kt, Credentials.kt,
                Format.kt, Label.kt
       state/   GateViewModel.kt, ScreenModels.kt (UiState + PollingViewModel + per-screen VMs + AgentsCache)
       ui/nav/  Routes.kt, RootNav.kt (gate + ModalNavigationDrawer + NavHost + drawer)
       ui/theme/ Color.kt, Theme.kt, Type.kt
-      ui/components/  AttobotCard, StatusBadge/TypePill, DataTable, KeyValue, JsonView,
+      ui/components/  OpenWorldCard, StatusBadge/TypePill, DataTable, KeyValue, JsonView,
                       NodeTree, FilterPills/AgentPills, Pager, StateViews, PullRefreshScreen
       ui/screens/    Overview, Workflows, WorkflowDetail, Agents, Messages, Memory,
                      Users, Config, Settings, Setup, Splash, BackendDown
@@ -90,7 +90,7 @@ On first launch the app shows a Setup screen. Enter:
 - **Server URL** — a host reachable *from the phone*. `http://127.0.0.1:8088`
   will **not** work (that's the dev box's loopback). Use the host's LAN IP
   (e.g. `http://192.168.1.10:8088`) or a Tailscale address.
-- **Bearer token** — only if the dashboard has `ATTOBOT_DASHBOARD_TOKEN` set;
+- **Bearer token** — only if the dashboard has `OPENWORLD_DASHBOARD_TOKEN` set;
   leave blank otherwise.
 
 Change either later from **Settings** (drawer → Settings, or "Clear token" in the
@@ -104,7 +104,7 @@ The compose service publishes the dashboard on **all interfaces** at port 8088
 `http://<host-lan-ip>:8088` over the LAN, or at the host's Tailscale address over
 Tailscale.
 
-Because this exposes the dashboard beyond loopback, set `ATTOBOT_DASHBOARD_TOKEN`
+Because this exposes the dashboard beyond loopback, set `OPENWORLD_DASHBOARD_TOKEN`
 and enter it in the app's Setup screen so access is gated by the bearer token.
 (The dashboard stays read-only regardless — the DB role has only SELECT/EXECUTE.)
 

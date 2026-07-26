@@ -2,7 +2,7 @@
 <resources>
     <!-- Framework Material theme (no com.google.android.material dep needed).
          Compose supplies the real Material3 dark theme at runtime. -->
-    <style name="Theme.Attobot" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.OpenWorld" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>

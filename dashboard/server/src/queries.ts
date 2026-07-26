@@ -40,7 +40,7 @@ export async function getWorkerEpoch(): Promise<OverviewResponse["worker"]> {
 
 export async function getOverviewAgents(): Promise<Array<{ id: number; slug: string; enabled: boolean }>> {
   const { rows } = await query<{ id: number; slug: string; enabled: boolean }>(
-    "SELECT id, slug, enabled FROM attobot.agents ORDER BY id"
+    "SELECT id, slug, enabled FROM ow.agents ORDER BY id"
   );
   return rows;
 }
@@ -55,7 +55,7 @@ export async function getStatusCounts(): Promise<Array<{ status: string; count: 
 export async function getTypeCounts(): Promise<Array<{ type: string; count: string }>> {
   const { rows } = await query<{ type: string; count: string }>(`
     SELECT kind AS type, count(*)::text AS count
-    FROM attobot.instance_index
+    FROM ow.instance_index
     GROUP BY kind
     ORDER BY count DESC
   `);
@@ -69,7 +69,7 @@ export async function getTypeCounts(): Promise<Array<{ type: string; count: stri
 const WORKFLOW_LIST_SQL = `
   SELECT id, label, status, submitted_by, db, updated_at,
          kind AS type, agent_slug AS agent
-  FROM attobot.instance_index
+  FROM ow.instance_index
   WHERE ($1::text IS NULL OR status = $1)
     AND ($2::text IS NULL OR kind = $2)
     AND ($3::text IS NULL OR agent_slug = $3)
@@ -104,7 +104,7 @@ export async function listWorkflows(opts: {
 // Separate, correct count (no limit/offset).
 const WORKFLOW_COUNT_SQL = `
   SELECT count(*)::text
-  FROM attobot.instance_index
+  FROM ow.instance_index
   WHERE ($1::text IS NULL OR status = $1)
     AND ($2::text IS NULL OR kind = $2)
     AND ($3::text IS NULL OR agent_slug = $3)
@@ -171,7 +171,7 @@ export async function traceTurn(messageId: number): Promise<TraceRow[]> {
   const { rows } = await query<TraceRow>(
     `SELECT instance_id, kind, agent_slug, message_id::text, tool_call_id,
             status, updated_at, result
-     FROM attobot.trace_turn($1)`,
+     FROM ow.trace_turn($1)`,
     [messageId]
   );
   return rows;
@@ -187,11 +187,11 @@ export async function listAgents(): Promise<AgentRow[]> {
            a.created_at, a.updated_at,
            m.name AS model_name, m.api_base, m.temperature::text AS temperature,
            m.reasoning_effort, m.context_tokens, m.multimodal_support,
-           (SELECT count(*) FROM attobot.messages WHERE agent_id = a.id)::text AS msg_count,
-           (SELECT count(*) FROM attobot.memory   WHERE agent_id = a.id)::text AS mem_count,
-           (SELECT count(*) FROM df.instances     WHERE label LIKE 'attobot:' || a.slug || ':%')::text AS wf_count
-    FROM attobot.agents a
-    LEFT JOIN attobot.models m ON m.id = a.model_id
+           (SELECT count(*) FROM ow.messages WHERE agent_id = a.id)::text AS msg_count,
+           (SELECT count(*) FROM ow.memory   WHERE agent_id = a.id)::text AS mem_count,
+           (SELECT count(*) FROM df.instances     WHERE label LIKE 'ow:' || a.slug || ':%')::text AS wf_count
+    FROM ow.agents a
+    LEFT JOIN ow.models m ON m.id = a.model_id
     ORDER BY a.id`);
   return rows;
 }
@@ -204,7 +204,7 @@ export async function listAgentMessages(
   const cap = Math.min(Math.max(limit, 1), 200);
   const { rows } = await query<MessageRow>(
     `SELECT id, agent_id, role, content, payload, channel, chat_id, tool_call_id, created_at
-     FROM attobot.messages
+     FROM ow.messages
      WHERE agent_id = $1 AND ($2::bigint IS NULL OR id < $2)
      ORDER BY id DESC
      LIMIT $3`,
@@ -221,8 +221,8 @@ export async function listMemory(agentId: number | null) {
   const { rows } = await query(
     `SELECT m.id, m.agent_id, m.content, m.payload, m.enabled, m.created_at, m.updated_at,
             COALESCE(array_agg(ms.message_id) FILTER (WHERE ms.message_id IS NOT NULL), '{}') AS source_message_ids
-     FROM attobot.memory m
-     LEFT JOIN attobot.memory_sources ms ON ms.memory_id = m.id
+     FROM ow.memory m
+     LEFT JOIN ow.memory_sources ms ON ms.memory_id = m.id
      WHERE ($1::bigint IS NULL OR m.agent_id = $1)
      GROUP BY m.id
      ORDER BY m.id DESC`,
@@ -234,7 +234,7 @@ export async function listMemory(agentId: number | null) {
 export async function listUsers() {
   const { rows } = await query(
     `SELECT id, channel, external_id, username, display_name, tier, payload, created_at, updated_at
-     FROM attobot.users ORDER BY updated_at DESC LIMIT 500`
+     FROM ow.users ORDER BY updated_at DESC LIMIT 500`
   );
   return rows;
 }
@@ -242,7 +242,7 @@ export async function listUsers() {
 export async function listConfig(agentId: number | null): Promise<ConfigRow[]> {
   const { rows } = await query<ConfigRow>(
     `SELECT agent_id, key, value, secret, updated_at
-     FROM attobot.config
+     FROM ow.config
      WHERE ($1::bigint IS NULL OR agent_id = $1)
      ORDER BY agent_id, key`,
     [agentId]
@@ -254,7 +254,7 @@ export async function listConfig(agentId: number | null): Promise<ConfigRow[]> {
 // Indexes
 // ---------------------------------------------------------------------------
 
-// All indexes across the non-system schemas (attobot, attotools, df, ffmpeg,
+// All indexes across the non-system schemas (ow, ow_tools, df, ffmpeg,
 // ssh, public, …). pg_catalog is readable by any role, so the dashboard role
 // needs no extra grant. pg_stat_user_indexes is NULL for indexes the stats
 // collector hasn't touched yet, hence the COALESCE. Sized desc so the heaviest

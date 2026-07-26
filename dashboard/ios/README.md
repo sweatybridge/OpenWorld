@@ -1,4 +1,4 @@
-# attobot dashboard — iOS client (SwiftUI)
+# OpenWorld dashboard — iOS client (SwiftUI)
 
 A native iOS port of the `dashboard/web` admin console, sibling to the Expo/RN client in
 `dashboard/mobile` and the native Android client in `dashboard/android`. It talks to the
@@ -23,10 +23,10 @@ Messages, Memory, Users, Config, plus the Setup / Settings / auth gate.
 
 ```
 dashboard/ios/
-  project.yml                    # XcodeGen spec → AttobotDashboard.xcodeproj
+  project.yml                    # XcodeGen spec → OpenWorldDashboard.xcodeproj
   README.md
-  AttobotDashboard/
-    App/        AttobotDashboardApp.swift   (@main entry)
+  OpenWorldDashboard/
+    App/        OpenWorldDashboardApp.swift   (@main entry)
     Core/       APIClient.swift   Models.swift   JSONValue.swift
                 Credentials.swift  Format.swift   LabelParser.swift
     Theme/      Theme.swift                 (Color(hex:) palette + statusColor)
@@ -62,16 +62,16 @@ translation of the RN drawer.
 
 ```bash
 cd dashboard/ios
-xcodegen generate          # materializes AttobotDashboard.xcodeproj
-open AttobotDashboard.xcodeproj
+xcodegen generate          # materializes OpenWorldDashboard.xcodeproj
+open OpenWorldDashboard.xcodeproj
 ```
 
 Then pick an iOS Simulator and run (⌘R). For a headless build check:
 
 ```bash
 xcodebuild \
-  -project AttobotDashboard.xcodeproj \
-  -scheme AttobotDashboard \
+  -project OpenWorldDashboard.xcodeproj \
+  -scheme OpenWorldDashboard \
   -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
 ```
@@ -85,7 +85,7 @@ install on a device.
 - **Server URL** — a host reachable *from the phone*. `http://127.0.0.1:8088` will **not**
   work (that's the dev box's loopback). Use the host's LAN IP (e.g.
   `http://192.168.1.10:8088`) or a Tailscale address.
-- **Bearer token** — only if the dashboard has `ATTOBOT_DASHBOARD_TOKEN` set; leave blank
+- **Bearer token** — only if the dashboard has `OPENWORLD_DASHBOARD_TOKEN` set; leave blank
   otherwise.
 
 Change either later from the **Settings** screen (drawer → Settings, or "Clear token" in
@@ -98,7 +98,7 @@ The compose service publishes the dashboard on **all interfaces** at port 8088
 `http://<host-lan-ip>:8088` over the LAN, or at the host's Tailscale address over
 Tailscale.
 
-Because this exposes the dashboard beyond loopback, set `ATTOBOT_DASHBOARD_TOKEN` and
+Because this exposes the dashboard beyond loopback, set `OPENWORLD_DASHBOARD_TOKEN` and
 enter it in the app's Setup screen so access is gated by the bearer token. (The dashboard
 stays read-only regardless — the DB role has only SELECT/EXECUTE.)
 

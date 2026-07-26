@@ -1,8 +1,8 @@
 {
-  "name": "attobot-dashboard-server",
+  "name": "OpenWorld-dashboard-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Read-only admin API for pg_durable workflows + attobot domain",
+  "description": "Read-only admin API for pg_durable workflows + OpenWorld domain",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
