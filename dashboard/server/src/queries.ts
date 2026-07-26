@@ -140,27 +140,49 @@ export async function workflowDetail(id: string) {
   ).catch(() => ({ rows: [{ result: null }] }));
   const result = resultRes.rows[0]?.result ?? null;
 
-  const nodesRes = await query<InstanceNode>(
-    "SELECT execution_id, node_id, node_type, query, result_name, left_node, right_node, status, result FROM df.instance_nodes($1) ORDER BY execution_id DESC, node_id"
-    , [id]
-  ).catch(() => ({ rows: [] as InstanceNode[] }));
-  const nodes = nodesRes.rows;
+  type InstanceNodeRow = Omit<InstanceNode, "execution_id">;
+  type InstanceExecutionRow = {
+    execution_id: string;
+    status: string;
+    event_count: string;
+    duration_ms: string | null;
+    output: unknown;
+  };
 
-  const execsRes = await query(
+  const nodesRes = await query<InstanceNodeRow>(
+    `SELECT node_id, node_type, query, result_name, left_node, right_node, status, result
+     FROM df.instance_nodes($1)
+     ORDER BY node_id`,
+    [id]
+  );
+
+  const execsRes = await query<InstanceExecutionRow>(
     "SELECT execution_id, status, event_count, duration_ms, output FROM df.instance_executions($1) ORDER BY execution_id DESC"
     , [id]
-  ).catch(() => ({ rows: [] }));
+  ).catch(() => ({ rows: [] as InstanceExecutionRow[] }));
   const executions = execsRes.rows;
 
-  // Pick the execution whose node graph to render: the current one if known,
-  // else the newest execution present among the nodes. df reports execution ids
-  // as text, so compare as strings on the client.
+  // instance_nodes returns the current graph but no longer includes its
+  // execution id. Preserve the dashboard API contract by sourcing the id from
+  // instance_info, or from the newest execution when the info field is absent.
   const currentFromInfo =
     info && (info as { current_execution_id?: unknown }).current_execution_id != null
       ? String((info as { current_execution_id: unknown }).current_execution_id)
       : null;
   const current_execution_id =
-    currentFromInfo ?? (nodes[0]?.execution_id ?? null);
+    currentFromInfo ??
+    (executions[0]?.execution_id != null ? String(executions[0].execution_id) : null);
+
+  let nodes: InstanceNode[] = [];
+  if (nodesRes.rows.length > 0) {
+    if (current_execution_id === null) {
+      throw new Error(`df.instance_nodes returned nodes without an execution id for ${id}`);
+    }
+    nodes = nodesRes.rows.map((node) => ({
+      ...node,
+      execution_id: current_execution_id,
+    }));
+  }
 
   return { info, explain, result, nodes, current_execution_id, executions };
 }
