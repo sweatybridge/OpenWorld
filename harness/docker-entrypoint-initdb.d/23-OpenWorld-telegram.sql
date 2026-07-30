@@ -292,6 +292,24 @@ BEGIN
 END;
 $$;
 
+-- True when Telegram rejected a sendMessage because the legacy-Markdown text
+-- could not be parsed ("Bad Request: can't parse entities: ..."). The LLM
+-- writes CommonMark (**bold**, '*' bullets, truncated 4096-char tails), which
+-- legacy parse_mode=Markdown rejects whenever the markers don't balance; the
+-- send graph uses this to retry the same text without parse_mode instead of
+-- failing the send instance. Any other error (chat not found, blocked, too
+-- long) is not a parse error and still fails the instance on the first
+-- response. Pure: parses only p_http_response.
+CREATE OR REPLACE FUNCTION ow._telegram_is_parse_error(p_http_response jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT ow._http_status(p_http_response) = 400
+     AND coalesce(ow._http_body_json(p_http_response)->>'description', '')
+         ILIKE '%can''t parse entities%';
+$$;
+
 -- Render an OpenAI tool_calls array as a compact, human-readable block so a
 -- tool-call assistant turn can be delivered to Telegram (where the raw turn is
 -- usually empty text). One line per call: "🔧 NAME(<arguments json>)", wrapped
@@ -338,7 +356,9 @@ DECLARE
   v_thread_id text;
   v_is_attachment boolean;
   v_tools text;
+  v_text text;
   v_body jsonb;
+  v_body_plain jsonb;
   v_att jsonb;
   v_content_b64 text;
   v_kind text;
@@ -419,23 +439,46 @@ BEGIN
   -- text: df.http sends via sendMessage, then send_message parses the status.
   -- A tool-call turn with empty content is rendered to its tool name + params
   -- so the chat sees what the agent is doing instead of an empty message.
+  --
+  -- The first attempt uses parse_mode=Markdown for nicer rendering, but the
+  -- LLM writes CommonMark (**bold**, '*' bullets) that Telegram's legacy
+  -- Markdown parser rejects whenever the markers don't balance ("can't parse
+  -- entities"). On exactly that error the graph retries the same text without
+  -- parse_mode, so a malformed reply is delivered verbatim instead of failing
+  -- the send instance and vanishing. Both branches still end in send_message,
+  -- so any other Telegram error (or a failed retry) raises and fails the
+  -- instance as before.
   v_tools := ow._render_tool_calls(v_msg.payload->'tool_calls');
+  v_text := left(concat_ws(E'\n', nullif(v_msg.content, ''), nullif(v_tools, '')), 4096);
   v_body := jsonb_build_object(
     'chat_id', v_chat_id,
     'parse_mode', 'Markdown',
-    'text', left(concat_ws(E'\n', nullif(v_msg.content, ''), nullif(v_tools, '')), 4096)
+    'text', v_text
   );
+  v_body_plain := jsonb_build_object('chat_id', v_chat_id, 'text', v_text);
   IF v_thread_id IS NOT NULL AND v_thread_id <> '' THEN
     v_body := v_body || jsonb_build_object('message_thread_id', v_thread_id::bigint);
+    v_body_plain := v_body_plain || jsonb_build_object('message_thread_id', v_thread_id::bigint);
   END IF;
 
   RETURN df.http(
     ow._telegram_api_url(p_agent_slug, 'sendMessage'), 'POST', v_body::text,
     ow._telegram_headers(), 30
   ) |=> 'r'
-    ~> format(
-      'SELECT ow.send_message(%L, %s, $r::jsonb)::jsonb AS result',
-      p_agent_slug, p_message_id
+    ~> df.if(
+      'SELECT ow._telegram_is_parse_error($r::jsonb)',
+      df.http(
+        ow._telegram_api_url(p_agent_slug, 'sendMessage'), 'POST', v_body_plain::text,
+        ow._telegram_headers(), 30
+      ) |=> 'r2'
+        ~> format(
+          'SELECT ow.send_message(%L, %s, $r2::jsonb)::jsonb AS result',
+          p_agent_slug, p_message_id
+        ),
+      format(
+        'SELECT ow.send_message(%L, %s, $r::jsonb)::jsonb AS result',
+        p_agent_slug, p_message_id
+      )
     );
 END;
 $$;

@@ -16,10 +16,10 @@
 -- so it covers both paths' failure logic.
 \set ON_ERROR_STOP on
 BEGIN;
--- plan(2) up front: this file uses throws_ok, whose result path does not trip
+-- plan(5) up front: this file uses throws_ok, whose result path does not trip
 -- no_plan()'s deferred end-of-transaction plan emission, so an explicit plan
 -- keeps the TAP output well-formed for pg_prove.
-SELECT plan(2);
+SELECT plan(5);
 
 -- 4xx with ok:false (the shape Telegram returns for a rejected sendMessage,
 -- e.g. an unroutable chat_id): the function raises P0001, so the send instance
@@ -38,6 +38,27 @@ SELECT is(
   (SELECT (ow.send_message('primary', 0, '{"status":200,"body":"{\"ok\":true,\"result\":{\"message_id\":42}}"}'::jsonb))->>'sent'),
   'true',
   'text-path 2xx ok:true returns sent=true (instance completes)'
+);
+
+-- _telegram_is_parse_error gates the send graph's plain-text retry. The exact
+-- shape Telegram returned for instance 3a8e027a (LLM wrote **bold** + '*'
+-- bullets, legacy Markdown could not balance the markers): only this error
+-- may trigger the retry; every other failure must still raise on the first
+-- response so it is neither retried nor masked.
+SELECT is(
+  ow._telegram_is_parse_error('{"status":400,"body":"{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: can''t parse entities: Can''t find end of the entity starting at byte offset 412\"}"}'::jsonb),
+  true,
+  'markdown parse error 400 is detected (plain-text retry fires)'
+);
+SELECT is(
+  ow._telegram_is_parse_error('{"status":400,"body":"{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: chat not found\"}"}'::jsonb),
+  false,
+  'non-parse 400 (chat not found) is not retried'
+);
+SELECT is(
+  ow._telegram_is_parse_error('{"status":200,"body":"{\"ok\":true,\"result\":{\"message_id\":42}}"}'::jsonb),
+  false,
+  'successful send is not retried'
 );
 
 ROLLBACK;
