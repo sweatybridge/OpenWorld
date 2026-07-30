@@ -16,10 +16,10 @@
 -- so it covers both paths' failure logic.
 \set ON_ERROR_STOP on
 BEGIN;
--- plan(5) up front: this file uses throws_ok, whose result path does not trip
+-- plan(22) up front: this file uses throws_ok, whose result path does not trip
 -- no_plan()'s deferred end-of-transaction plan emission, so an explicit plan
 -- keeps the TAP output well-formed for pg_prove.
-SELECT plan(5);
+SELECT plan(22);
 
 -- 4xx with ok:false (the shape Telegram returns for a rejected sendMessage,
 -- e.g. an unroutable chat_id): the function raises P0001, so the send instance
@@ -59,6 +59,107 @@ SELECT is(
   ow._telegram_is_parse_error('{"status":200,"body":"{\"ok\":true,\"result\":{\"message_id\":42}}"}'::jsonb),
   false,
   'successful send is not retried'
+);
+
+-- ow.telegramify: CommonMark → MarkdownV2 conversion, modeled on
+-- telegramify-markdown (the send graph posts its output with
+-- parse_mode=MarkdownV2). Pure function, exercised directly. Expected values
+-- below are written char-for-char ('' literals, so backslashes are literal).
+SELECT is(
+  ow.telegramify('# Hello World'),
+  '*Hello World*',
+  'heading → bold'
+);
+SELECT is(
+  ow.telegramify('This is **bold** and __strong__ text'),
+  'This is *bold* and *strong* text',
+  'strong ** and __ → *…*'
+);
+SELECT is(
+  ow.telegramify('an *italic* and _em_ word'),
+  'an _italic_ and _em_ word',
+  'emphasis * and _ → _…_'
+);
+SELECT is(
+  ow.telegramify('use snake_case_names here'),
+  'use snake\_case\_names here',
+  'intraword underscores stay escaped (no false emphasis)'
+);
+SELECT is(
+  ow.telegramify('~~gone~~'),
+  '~gone~',
+  'strikethrough ~~ → ~…~'
+);
+SELECT is(
+  ow.telegramify('run `rm -rf /tmp` now'),
+  'run `rm -rf /tmp` now',
+  'inline code span kept verbatim'
+);
+SELECT is(
+  ow.telegramify('a `a_b*c.d` span'),
+  'a `a_b*c.d` span',
+  'specials inside a code span are not escaped'
+);
+SELECT is(
+  ow.telegramify('```js
+const a_b = 1;
+```'),
+  '```js
+const a_b = 1;
+```',
+  'fenced block kept, content verbatim'
+);
+SELECT is(
+  ow.telegramify('see [docs](https://ex.com/a_(b))'),
+  'see [docs](https://ex.com/a_\(b\))',
+  'link: text kept, url escapes only ( )'
+);
+SELECT is(
+  ow.telegramify('[click **here**](https://x.com)'),
+  '[click *here*](https://x.com)',
+  'formatting inside link text; url dots not escaped'
+);
+SELECT is(
+  ow.telegramify('1.0.0 + x - y = z!'),
+  '1\.0\.0 \+ x \- y \= z\!',
+  'plain-text specials backslash-escaped'
+);
+SELECT is(
+  ow.telegramify('- one
+- two'),
+  '• one
+• two',
+  'dash bullets → •'
+);
+SELECT is(
+  ow.telegramify('1. one
+2. two'),
+  '1\. one
+2\. two',
+  'ordered list markers escaped'
+);
+SELECT is(
+  ow.telegramify('path D:\work\attobot end'),
+  'path D:\\work\\attobot end',
+  'backslashes doubled'
+);
+SELECT is(
+  ow.telegramify('> quoted **text**'),
+  '> quoted *text*',
+  'blockquote kept, content converted'
+);
+SELECT is(
+  ow.telegramify('```
+code `x`'),
+  '```
+code \`x\`
+```',
+  'unterminated fence closed; backticks escaped inside'
+);
+SELECT is(
+  ow.telegramify('_a_ and _b_'),
+  '_a_ and _b_',
+  'multiple emphasis spans in one line'
 );
 
 ROLLBACK;
