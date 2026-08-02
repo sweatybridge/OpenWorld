@@ -213,7 +213,8 @@ END $$;
 -- ===== store_inbound_attachment: unreachable URL clears pending =============
 -- ffmpeg.hls raises on a refused connection; store must catch it, delegate to
 -- fail_inbound_attachment in-place, and never RAISE (rolling back the
--- un-blocking UPDATE would leave the message stuck pending).
+-- un-blocking UPDATE would leave the message stuck pending). This exercises
+-- the VIDEO path (kind=video → ffmpeg.hls(file_url)).
 DO $$
 DECLARE
   v_msg_id bigint;
@@ -222,15 +223,15 @@ DECLARE
   v_content text;
 BEGIN
   INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
-    VALUES (1, 'user', '[telegram 201] [photo 1x1]',
+    VALUES (1, 'user', '[telegram 201] [video 2x2]',
             jsonb_build_object('attachment_pending', true,
-              'attachment_meta', jsonb_build_object('kind','photo','file_id','fid','mime_type','image/jpeg')),
+              'attachment_meta', jsonb_build_object('kind','video','file_id','fid','mime_type','video/mp4')),
             'telegram', 'CZ1')
     RETURNING id INTO v_msg_id;
 
   SELECT ow.store_inbound_attachment('primary', v_msg_id,
-    jsonb_build_object('kind','photo','file_id','fid','mime_type','image/jpeg'),
-    'http://127.0.0.1:1/never-reaches.mp4', 2.0) INTO v_stored;
+    jsonb_build_object('kind','video','file_id','fid','mime_type','video/mp4'),
+    'http://127.0.0.1:1/never-reaches.mp4', 2.0, NULL) INTO v_stored;
 
   ASSERT NOT v_stored IS NULL, 'store returns (does not RAISE) on ffmpeg.hls failure';
   ASSERT (v_stored::jsonb->>'ok') = 'false', 'store reports ok=false on failure';
@@ -239,7 +240,77 @@ BEGIN
     FROM ow.messages WHERE id = v_msg_id;
   ASSERT NOT (v_payload ? 'attachment_pending'), 'store-fail clears attachment_pending';
   ASSERT v_content LIKE '%[attachment download failed: ffmpeg.hls: %]',
-    'store-fail leaves the fail note appended to content';
+    'store-fail leaves the ffmpeg.hls fail note appended to content';
+END $$;
+
+-- ===== store_inbound_attachment: photo download failure clears pending =======
+-- Photo path: a non-2xx p_photo_http_response → store raises internally →
+-- caught → fail note with the 'photo download: ' prefix; no RAISE escapes.
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_stored text;
+  v_payload jsonb;
+  v_content text;
+BEGIN
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', '[telegram 202] [photo 1x1]',
+            jsonb_build_object('attachment_pending', true,
+              'attachment_meta', jsonb_build_object('kind','photo','file_id','fid','mime_type','image/jpeg')),
+            'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+
+  SELECT ow.store_inbound_attachment('primary', v_msg_id,
+    jsonb_build_object('kind','photo','file_id','fid','mime_type','image/jpeg'),
+    NULL, 2.0, jsonb_build_object('status', 500, 'body', '', 'ok', false)) INTO v_stored;
+
+  ASSERT (v_stored::jsonb->>'ok') = 'false', 'photo-download fail reports ok=false';
+  SELECT payload, content INTO v_payload, v_content
+    FROM ow.messages WHERE id = v_msg_id;
+  ASSERT NOT (v_payload ? 'attachment_pending'), 'photo-download fail clears attachment_pending';
+  ASSERT v_content LIKE '%[attachment download failed: photo download: %]',
+    'photo-download fail leaves the photo fail note appended to content';
+END $$;
+
+-- ===== store_inbound_attachment: photo happy path stores raw bytes ===========
+-- A 200 http_response with a real 1x1 PNG as base64 body → store inserts the
+-- RAW image bytes as a single segment, writes attachment.playlist_id, clears
+-- pending. _message_for_openai then base64-encodes s.data directly (no
+-- ffmpeg.thumbnail). Verifiable in pgTAP because no network/ffmpeg.hls is used.
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_stored text;
+  v_payload jsonb;
+  v_pid bigint;
+  v_seg_bytes bytea;
+  v_png text := '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63000100000005000100c0e9080a0000000049454e44ae426082';
+BEGIN
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', '[telegram 203] [photo 1x1]',
+            jsonb_build_object('attachment_pending', true,
+              'attachment_meta', jsonb_build_object('kind','photo','file_id','fid','mime_type','image/png')),
+            'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+
+  SELECT ow.store_inbound_attachment('primary', v_msg_id,
+    jsonb_build_object('kind','photo','file_id','fid','mime_type','image/png'),
+    NULL, 2.0, jsonb_build_object('status', 200, 'ok', true,
+      'body', encode(decode(v_png, 'hex'), 'base64'),
+      'encoding', 'base64')) INTO v_stored;
+
+  ASSERT (v_stored::jsonb->>'ok') = 'true', 'photo happy path reports ok=true';
+  SELECT payload INTO v_payload FROM ow.messages WHERE id = v_msg_id;
+  ASSERT NOT (v_payload ? 'attachment_pending'), 'photo happy path clears pending';
+  ASSERT (v_payload->'attachment'->>'playlist_id') IS NOT NULL, 'photo happy path writes playlist_id';
+  v_pid := (v_payload->'attachment'->>'playlist_id')::bigint;
+
+  -- The segment data IS the raw PNG (no mpegts wrapping): the same bytes we
+  -- uploaded. _message_for_openai will base64-encode s.data directly.
+  SELECT data INTO v_seg_bytes FROM ffmpeg.hls_segments
+    WHERE playlist_id = v_pid ORDER BY segment_index LIMIT 1;
+  ASSERT v_seg_bytes = decode(v_png, 'hex'),
+    'photo segment stores the raw image bytes verbatim (no ffmpeg.hls wrapping)';
 END $$;
 
 -- ===== _message_for_openai: text fallbacks ===================================
@@ -295,8 +366,8 @@ BEGIN
 END $$;
 
 -- ===== object presence =======================================================
-SELECT ok(to_regprocedure('ow.store_inbound_attachment(text,bigint,jsonb,text,float8)') IS NOT NULL,
-  'ow.store_inbound_attachment(text,bigint,jsonb,text,float8) exists');
+SELECT ok(to_regprocedure('ow.store_inbound_attachment(text,bigint,jsonb,text,float8,jsonb)') IS NOT NULL,
+  'ow.store_inbound_attachment(text,bigint,jsonb,text,float8,jsonb) exists');
 SELECT ok(to_regprocedure('ow.fail_inbound_attachment(text,bigint,text)') IS NOT NULL,
   'ow.fail_inbound_attachment(text,bigint,text) exists');
 SELECT ok(to_regprocedure('ow.start_inbound_downloads(text,jsonb)') IS NOT NULL,
