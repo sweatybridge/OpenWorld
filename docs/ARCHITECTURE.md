@@ -92,10 +92,19 @@ Two least-privilege decisions:
 
 ## Docker Image
 
-The image uses `postgres:18-trixie` as its base and installs
-`pg-durable-postgresql-18_0.2.3-1_amd64.deb` from the
-`sweatybridge/pg_durable` `v0.2.3` GitHub release. The Dockerfile verifies the
+The image uses `pgvector/pgvector:pg18-trixie` as its base and installs
+`pg-durable-postgresql-18_0.2.5-1_amd64.deb` from the
+`sweatybridge/pg_durable` `v0.2.5` GitHub release. The Dockerfile verifies the
 published SHA256 digest before installing the package.
+
+The fork's package is used instead of Microsoft's own release assets on
+purpose: Microsoft's debs are compiled with the `http-allow-azure-domains`
+Cargo feature, which restricts `df.http()`/`df.http_multipart()` to Azure
+service domains and private-IP-blocked endpoints — Telegram
+(`api.telegram.org`) and the local LLM endpoint (e.g. `localhost:11434`)
+would both be refused. The fork builds the same source with `http-allow-all`.
+Version numbers track upstream; the fork's `v0.2.5` matches Microsoft's
+`v0.2.5` feature-for-feature (including `df.http_multipart()`).
 
 `shared_preload_libraries = 'pg_durable'` (plus `pg_durable.database` and
 `pg_durable.worker_role`) is written into the base sample config so new clusters

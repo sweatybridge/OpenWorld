@@ -185,3 +185,15 @@ SELECT ow.ensure_agent_cron_loop(
   p_message => 'tick'
 );
 ```
+
+## Durable history retention
+
+pg_durable prunes terminal (`completed` / `failed` / `cancelled`) instances
+and their nodes: rows older than `pg_durable.retention_days` are removed by an
+hourly reconciliation pass, and at most 10,000 terminal instances are kept
+regardless of age. Running and pending instances are never pruned. The image
+sets `pg_durable.retention_days = 90`; change it in `harness/Dockerfile`
+(requires a container recreate to apply).
+
+The dashboard's workflow history is bounded by this window. Copy rows out of
+`df.instances` before they age out if you need a longer audit trail.

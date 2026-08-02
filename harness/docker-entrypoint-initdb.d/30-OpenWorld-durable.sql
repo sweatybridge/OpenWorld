@@ -76,7 +76,7 @@ BEGIN
     ~> df.http(ow._llm_url(p_agent_slug), 'POST', '$request',
                ow._llm_headers(p_agent_slug), 120) |=> 'response'
     ~> df.if(
-         'SELECT ow._http_status($response::jsonb) >= 200 AND ow._http_status($response::jsonb) < 300',
+         'SELECT $response.ok',
          format('SELECT ow.record_assistant(%L, $response::jsonb, %s, %L, %L)::jsonb AS assistant',
                 p_agent_slug, coalesce(p_requesting_user_id::text, 'NULL'), v_channel, v_chat_id),
          format('SELECT ow.append_message(%L, ''system'', format(''[llm http error %%s]'', ow._http_status($response::jsonb)))::text AS e',

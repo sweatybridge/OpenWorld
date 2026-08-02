@@ -2,9 +2,9 @@ FROM pgvector/pgvector:pg18-trixie AS harness
 
 ARG TARGETARCH=amd64
 
-ARG PG_DURABLE_VERSION=0.1.0
+ARG PG_DURABLE_VERSION=0.2.5
 ARG PG_DURABLE_REPO=sweatybridge/pg_durable
-ARG PG_DURABLE_SHA256=16fc845cda8169306328a3adfc7b326023f7b0efb6e0d3f4844dd2964576a079
+ARG PG_DURABLE_SHA256=7dd7c0ac959948383c64f2bd05c65b3c0ce766ed3669ac58e47d3daec3828bd4
 
 ARG PG_SSH_VERSION=0.3.0
 ARG PG_SSH_REPO=sweatybridge/pg_ssh
@@ -46,21 +46,27 @@ RUN set -eux; \
 RUN set -eux; \
     echo "shared_preload_libraries = 'pg_durable'" >> /usr/share/postgresql/postgresql.conf.sample; \
     # df's background workers (management + SQL-node executors) all draw from
-    # max_worker_processes. With only the default 8, a loop blocked in
-    # wait_for_completion (up to 120s) starves the pool and tool nodes queue
-    # against execution_acquire_timeout (30s) — a 1ms tool call sat 46s. Raise
-    # it so executors have headroom alongside the management workload.
+    # max_worker_processes. With only the default 8, a loop blocked waiting on
+    # tool calls (await_tool_calls polls df.status in-loop, up to 120s) starves
+    # the pool and tool nodes queue against execution_acquire_timeout (30s) —
+    # a 1ms tool call sat 46s. Raise it so executors have headroom alongside
+    # the management workload.
     echo "max_worker_processes = 32" >> /usr/share/postgresql/postgresql.conf.sample; \
     # Orchestration runs over its own connection pools, separate from
     # max_worker_processes. The defaults (max_duroxide_connections=10,
     # max_management_connections=6) saturate once several agent loops run
-    # concurrently — await_tool_calls' wait_for_completion holds pool capacity
+    # concurrently — await_tool_calls' df.status polling holds pool capacity
     # for up to 120s, so tool activities queue, miss their 120s tool-call
     # timeout, and the instance is cancelled before the real work (e.g. an
     # execute-http) ever runs. Raise both to give executors headroom under
     # concurrent primary/subcons loops.
     echo "pg_durable.max_duroxide_connections = 32" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.max_management_connections = 12" >> /usr/share/postgresql/postgresql.conf.sample; \
+    # v0.2.4+ prunes terminal df.instances: rows older than retention_days are
+    # removed by hourly reconciliation, and a fixed 10k-terminal hard cap
+    # applies on top. The dashboard's workflow history is bounded by this —
+    # 90 days keeps a useful trail without unbounded growth.
+    echo "pg_durable.retention_days = 90" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.database = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample; \
     echo "pg_durable.worker_role = 'postgres'" >> /usr/share/postgresql/postgresql.conf.sample
 
