@@ -45,9 +45,14 @@ SELECT is((SELECT message_id FROM ow.parse_instance_label('ow:sidecar:cron:revie
 -- send / typing: message id, no agent
 SELECT is((SELECT kind       FROM ow.parse_instance_label('ow:send:42')),   'send',    'send: kind');
 SELECT is((SELECT message_id FROM ow.parse_instance_label('ow:send:42')),   42::bigint,'send: message_id');
-SELECT is((SELECT agent_slug FROM ow.parse_instance_label('ow:send:42')),   NULL,      'send: no agent');
+SELECT is((SELECT agent_slug FROM ow.parse_instance_label('ow:send:42')),    NULL,      'send: no agent');
 SELECT is((SELECT kind       FROM ow.parse_instance_label('ow:typing:7')),  'typing',  'typing: kind');
 SELECT is((SELECT message_id FROM ow.parse_instance_label('ow:typing:7')),  7::bigint, 'typing: message_id');
+
+-- download: message id, no agent (inbound attachment instance)
+SELECT is((SELECT kind        FROM ow.parse_instance_label('ow:download:42')), 'download', 'download: kind');
+SELECT is((SELECT message_id  FROM ow.parse_instance_label('ow:download:42')), 42::bigint, 'download: message_id');
+SELECT is((SELECT agent_slug  FROM ow.parse_instance_label('ow:download:42')), NULL,       'download: no agent');
 
 -- tool: message id + tool_call_id, no agent
 SELECT is((SELECT kind        FROM ow.parse_instance_label('ow:tool:42:call_abc')), 'tool',      'tool: kind');

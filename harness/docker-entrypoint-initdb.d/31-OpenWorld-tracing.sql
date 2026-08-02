@@ -39,33 +39,35 @@ RETURNS TABLE(
 LANGUAGE sql
 IMMUTABLE
 AS $$
-  SELECT
-    CASE
-      WHEN p_label ~ '^ow:[^:]+:loop($|:)' THEN 'loop'
-      WHEN p_label ~ '^ow:[^:]+:inbox$'    THEN 'inbox'
-      WHEN p_label ~ '^ow:[^:]+:cron:'     THEN 'cron'
-      WHEN p_label ~ '^ow:send:'           THEN 'send'
-      WHEN p_label ~ '^ow:tool:'           THEN 'tool'
-      WHEN p_label ~ '^ow:typing:'         THEN 'typing'
-      WHEN p_label LIKE 'ow:%'             THEN 'ow'
-      ELSE 'other'
-    END,
-    COALESCE(
-      (regexp_match(p_label, '^ow:([^:]+):loop($|:)'))[1],
-      (regexp_match(p_label, '^ow:([^:]+):inbox$'))[1],
-      (regexp_match(p_label, '^ow:([^:]+):cron:'))[1]
-    ),
-    CASE
-      WHEN p_label ~ '^ow:[^:]+:loop:' THEN NULLIF((regexp_match(p_label, '^ow:[^:]+:loop:([0-9]+)'))[1], '')::bigint
-      WHEN p_label ~ '^ow:typing:'     THEN NULLIF((regexp_match(p_label, '^ow:typing:([0-9]+)'))[1], '')::bigint
-      WHEN p_label ~ '^ow:send:'       THEN NULLIF((regexp_match(p_label, '^ow:send:([0-9]+)'))[1], '')::bigint
-      WHEN p_label ~ '^ow:tool:'       THEN NULLIF((regexp_match(p_label, '^ow:tool:([0-9]+):'))[1], '')::bigint
-      ELSE NULL
-    END,
-    CASE
-      WHEN p_label ~ '^ow:tool:' THEN (regexp_match(p_label, '^ow:tool:[0-9]+:(.+)$'))[1]
-      ELSE NULL
-    END;
+SELECT
+     CASE
+       WHEN p_label ~ '^ow:[^:]+:loop($|:)' THEN 'loop'
+       WHEN p_label ~ '^ow:[^:]+:inbox$'    THEN 'inbox'
+       WHEN p_label ~ '^ow:[^:]+:cron:'     THEN 'cron'
+       WHEN p_label ~ '^ow:send:'           THEN 'send'
+       WHEN p_label ~ '^ow:download:'       THEN 'download'
+       WHEN p_label ~ '^ow:tool:'           THEN 'tool'
+       WHEN p_label ~ '^ow:typing:'         THEN 'typing'
+       WHEN p_label LIKE 'ow:%'             THEN 'ow'
+       ELSE 'other'
+     END,
+     COALESCE(
+       (regexp_match(p_label, '^ow:([^:]+):loop($|:)'))[1],
+       (regexp_match(p_label, '^ow:([^:]+):inbox$'))[1],
+       (regexp_match(p_label, '^ow:([^:]+):cron:'))[1]
+     ),
+     CASE
+       WHEN p_label ~ '^ow:[^:]+:loop:' THEN NULLIF((regexp_match(p_label, '^ow:[^:]+:loop:([0-9]+)'))[1], '')::bigint
+       WHEN p_label ~ '^ow:typing:'     THEN NULLIF((regexp_match(p_label, '^ow:typing:([0-9]+)'))[1], '')::bigint
+       WHEN p_label ~ '^ow:send:'       THEN NULLIF((regexp_match(p_label, '^ow:send:([0-9]+)'))[1], '')::bigint
+       WHEN p_label ~ '^ow:download:'   THEN NULLIF((regexp_match(p_label, '^ow:download:([0-9]+)'))[1], '')::bigint
+       WHEN p_label ~ '^ow:tool:'       THEN NULLIF((regexp_match(p_label, '^ow:tool:([0-9]+):'))[1], '')::bigint
+       ELSE NULL
+     END,
+     CASE
+       WHEN p_label ~ '^ow:tool:' THEN (regexp_match(p_label, '^ow:tool:[0-9]+:(.+)$'))[1]
+       ELSE NULL
+     END;
 $$;
 
 -- Structured projection of every df.instances row. security_invoker so it does

@@ -57,12 +57,33 @@ AS $$
   FROM jsonb_array_elements(p_tool_calls) WITH ORDINALITY AS e(value, ordinality)
 $$;
 
-CREATE OR REPLACE FUNCTION ow._message_for_openai(p_message ow.messages)
+-- Render one user message as an OpenAI chat message. When the message carries
+-- a photo/video attachment ingested as an HLS playlist, and the model is
+-- multimodal AND `p_inline` is true (current turn only), the content becomes a
+-- multimodal array: the text/caption followed by one `image_url` entry per
+-- HLS segment, each built by `ffmpeg.thumbnail(s.data, 0.0, 'jpeg')`. A photo
+-- ingests as a single segment → one image; a video → N sampled frames. When
+-- either gate is false (next turn, non-multimodal model, or video-but-uninlinable
+-- case) the text placeholder is emitted as before. STABLE so the planner can
+-- combine it with other reads; pure w.r.t. the message row + the playlist
+-- tables (no agent-scoped config reads, no GUC dependency).
+CREATE OR REPLACE FUNCTION ow._message_for_openai(
+  p_message ow.messages,
+  p_multimodal boolean DEFAULT false,
+  p_inline boolean DEFAULT false
+)
 RETURNS jsonb
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 AS $$
-  SELECT jsonb_strip_nulls(
+DECLARE
+  v_base jsonb;
+  v_att jsonb;
+  v_images jsonb;
+  v_text text;
+  v_mime text;
+BEGIN
+  v_base := jsonb_strip_nulls(
     jsonb_build_object(
       'role', p_message.role,
       'content', CASE WHEN p_message.content = '' AND p_message.role = 'assistant'
@@ -76,6 +97,50 @@ AS $$
       ELSE '{}'::jsonb
     END
   );
+
+  IF NOT (p_multimodal AND p_inline) THEN
+    RETURN v_base;
+  END IF;
+
+  v_att := p_message.payload->'attachment';
+  -- Inline thumbnails only for photo OR video attachments with a playlist_id.
+  -- (Photos yield one frame; videos yield one frame per segment, sampling the
+  -- whole clip at the playlist's segment_duration. Documents are never
+  -- inlined, and are not in the supported set anyway.)
+  IF v_att IS NULL
+     OR jsonb_typeof(v_att) <> 'object'
+     OR v_att->>'kind' NOT IN ('photo', 'video')
+     OR v_att->>'playlist_id' IS NULL THEN
+    RETURN v_base;
+  END IF;
+
+  v_text := coalesce(p_message.content, '');
+  v_mime := coalesce(v_att->>'mime_type', 'image/jpeg');
+
+  SELECT coalesce(jsonb_agg(
+    jsonb_build_object(
+      'type', 'image_url',
+      'image_url', jsonb_build_object(
+        'url', 'data:' || v_mime || ';base64,' ||
+               encode(ffmpeg.thumbnail(s.data, 0.0, 'jpeg'), 'base64')
+      )
+    )
+    ORDER BY s.segment_index
+  ), '[]'::jsonb)
+  INTO v_images
+  FROM ffmpeg.hls_segments s
+  WHERE s.playlist_id = (v_att->>'playlist_id')::bigint;
+
+  IF jsonb_typeof(v_images) <> 'array' OR jsonb_array_length(v_images) = 0 THEN
+    RETURN v_base;
+  END IF;
+
+  RETURN jsonb_set(
+    v_base,
+    '{content}',
+    jsonb_build_array(jsonb_build_object('type', 'text', 'text', v_text)) || v_images
+  );
+END;
 $$;
 
 -- Tool schemas are inferred from the ow_tools._tool_* functions: parameter
@@ -217,6 +282,8 @@ DECLARE
   v_history_limit integer;
   v_messages jsonb;
   v_body jsonb;
+  v_last_turn_boundary bigint;
+  v_multimodal boolean;
 BEGIN
   SELECT * INTO v_agent FROM ow.agents WHERE slug = p_agent_slug AND enabled;
   IF v_agent.id IS NULL THEN
@@ -236,8 +303,27 @@ BEGIN
   END IF;
 
   v_history_limit := coalesce(ow._config_text(v_agent.id, 'history_limit', '200')::integer, 200);
+  v_multimodal := coalesce(v_model.multimodal_support, false);
 
-  SELECT coalesce(jsonb_agg(ow._message_for_openai(m) ORDER BY m.id), '[]'::jsonb)
+  -- Inline attachments for the current turn only: messages after the most
+  -- recent assistant turn with NO tool_calls (the turn boundary). Earlier
+  -- turns' attachments become text placeholders again — the per-turn
+  -- ffmpeg.thumbnail cost is paid once, not per iteration.
+  SELECT coalesce(max(id), 0) INTO v_last_turn_boundary
+    FROM ow.messages
+    WHERE agent_id = v_agent.id
+      AND role = 'assistant'
+      AND (NOT (payload ? 'tool_calls')
+           OR jsonb_typeof(payload->'tool_calls') <> 'array'
+           OR jsonb_array_length(payload->'tool_calls') = 0);
+
+  SELECT coalesce(jsonb_agg(
+    ow._message_for_openai(
+      m,
+      v_multimodal,
+      m.role = 'user' AND m.id > v_last_turn_boundary
+    ) ORDER BY m.id
+  ), '[]'::jsonb)
   INTO v_messages
   FROM (
     SELECT *
