@@ -86,7 +86,6 @@ DECLARE
   v_att jsonb;
   v_images jsonb;
   v_text text;
-  v_mime text;
 BEGIN
   v_base := jsonb_strip_nulls(
     jsonb_build_object(
@@ -120,7 +119,6 @@ BEGIN
   END IF;
 
   v_text := coalesce(p_message.content, '');
-  v_mime := coalesce(v_att->>'mime_type', 'image/jpeg');
 
   -- The base64 body of a data: URI is a single token: Postgres's
   -- encode(bytea,'base64') chunk-wraps at 76 chars with '\n', which would
@@ -128,11 +126,17 @@ BEGIN
   -- OpenAI-compatible server (llama.cpp rejects it in <50ms as "Failed to
   -- load image or audio file" without ever attempting to decode). Strip
   -- '\n' / '\r' / spaces so the base64 is one unbroken run.
+  --
+  -- The data-URI MIME is ALWAYS image/jpeg: ffmpeg.thumbnail(..., 'jpeg')
+  -- outputs JPEG frame bytes regardless of the source kind (photo or
+  -- video). Using the attachment's mime_type (e.g. video/mp4) produces
+  -- 'data:video/mp4;base64,<jpeg-bytes>' which OpenAI-compatible servers
+  -- reject as "Invalid uri format" — image_url only accepts image MIMEs.
   SELECT coalesce(jsonb_agg(
     jsonb_build_object(
       'type', 'image_url',
       'image_url', jsonb_build_object(
-        'url', 'data:' || v_mime || ';base64,' ||
+        'url', 'data:image/jpeg;base64,' ||
                translate(encode(ffmpeg.thumbnail(s.data, 0.0, 'jpeg'), 'base64'), E'\n\r ', '')
       )
     )
