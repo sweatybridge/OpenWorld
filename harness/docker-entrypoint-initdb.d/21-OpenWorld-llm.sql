@@ -61,15 +61,16 @@ $$;
 -- a photo/video attachment ingested as an HLS playlist, and the model is
 -- multimodal AND `p_inline` is true (current turn only), the content becomes a
 -- multimodal array: the text/caption followed by one `image_url` entry per
--- HLS segment. For a photo, the single segment carries the RAW image bytes
--- (store_inbound_attachment inserts them directly — ffmpeg.hls would wrap a
--- still as opaque mpegts data with no decodeable frame), so the data-URI is
--- `encode(s.data, 'base64')`. For a video, segments carry real video streams
--- and each entry is `encode(ffmpeg.thumbnail(s.data, 0.0, 'jpeg'), 'base64')`
--- — one sampled frame per segment. When either gate is false (next turn,
--- non-multimodal model) the text placeholder is emitted as before. STABLE so
--- the planner can combine it with other reads; pure w.r.t. the message row +
--- the playlist tables (no agent-scoped config reads, no GUC dependency).
+-- HLS segment, each built by `ffmpeg.thumbnail(s.data, 0.0, 'jpeg')`. A photo
+-- ingests as a single segment → one image; a video → N sampled frames. When
+-- either gate is false (next turn, non-multimodal model) the text placeholder
+-- is emitted as before. STABLE so the planner can combine it with other reads;
+-- pure w.r.t. the message row + the playlist tables (no agent-scoped config
+-- reads, no GUC dependency).
+--
+-- Requires pg_ffmpeg v0.3.5+: hls() on a still-image input stores the original
+-- image bytes as one segment (bypassing the mpegts muxer), so ffmpeg.thumbnail
+-- decodes it directly — same call shape for both photo and video.
 CREATE OR REPLACE FUNCTION ow._message_for_openai(
   p_message ow.messages,
   p_multimodal boolean DEFAULT false,
@@ -86,8 +87,6 @@ DECLARE
   v_images jsonb;
   v_text text;
   v_mime text;
-  v_kind text;
-  v_thumb bytea;
 BEGIN
   v_base := jsonb_strip_nulls(
     jsonb_build_object(
@@ -109,8 +108,10 @@ BEGIN
   END IF;
 
   v_att := p_message.payload->'attachment';
-  -- Inline only for photo OR video attachments with a playlist_id. Documents
-  -- are never inlined and are not in the supported set anyway.
+  -- Inline thumbnails only for photo OR video attachments with a playlist_id.
+  -- (Photos yield one frame; videos yield one frame per segment, sampling the
+  -- whole clip at the playlist's segment_duration. Documents are never
+  -- inlined, and are not in the supported set anyway.)
   IF v_att IS NULL
      OR jsonb_typeof(v_att) <> 'object'
      OR v_att->>'kind' NOT IN ('photo', 'video')
@@ -119,18 +120,14 @@ BEGIN
   END IF;
 
   v_text := coalesce(p_message.content, '');
-  v_kind := v_att->>'kind';
-  v_mime := coalesce(v_att->>'mime_type', CASE v_kind WHEN 'photo' THEN 'image/jpeg' ELSE 'image/jpeg' END);
+  v_mime := coalesce(v_att->>'mime_type', 'image/jpeg');
 
   SELECT coalesce(jsonb_agg(
     jsonb_build_object(
       'type', 'image_url',
       'image_url', jsonb_build_object(
         'url', 'data:' || v_mime || ';base64,' ||
-               CASE v_kind
-                 WHEN 'photo' THEN encode(s.data, 'base64')
-                 ELSE encode(ffmpeg.thumbnail(s.data, 0.0, 'jpeg'), 'base64')
-               END
+               encode(ffmpeg.thumbnail(s.data, 0.0, 'jpeg'), 'base64')
       )
     )
     ORDER BY s.segment_index

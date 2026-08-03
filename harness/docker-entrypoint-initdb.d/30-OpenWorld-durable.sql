@@ -279,64 +279,26 @@ AS $$
 DECLARE
   v_agent_id bigint := ow.agent_id(p_agent_slug);
   v_getfile_url text;
-  v_file_base_url text;
-  v_fp_node text;
-  v_store_node text;
 BEGIN
   PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
   v_getfile_url := ow._telegram_api_url(p_agent_slug, 'getFile');
-  -- Concrete base for file downloads: https://api.telegram.org/file/bot<token>/
-  -- Built at graph-BUILD time so df.http's URL-scheme validation passes; the
-  -- per-file file_path from getFile binds as $fp and interpolates at execution.
-  v_file_base_url := ow._telegram_file_url(p_agent_slug);
 
-  -- The node SQL runs in its own transaction, so the build-time GUC bind
-  -- above does not carry over; bind the agent GUC inline (CROSS JOIN,
-  -- evaluated before any ow.config read) so RLS lets _telegram_file_url see
-  -- the telegram_token row.
-  v_fp_node := format(
-    'SELECT ow._http_body_json($meta::jsonb) #>> ''{result,file_path}'' AS fp FROM (SELECT set_config(''ow.current_agent_id'', %L, true)) AS cfg',
-    v_agent_id::text);
-
-  IF p_kind = 'photo' THEN
-    -- Photo path: df.http GETs the file bytes (URL = concrete base + $fp),
-    -- and store decodes them into a single RAW-image HLS segment. ffmpeg.hls
-    -- would wrap a still as opaque mpegts `bin_data` with no decodeable frame
-    -- for thumbnail, so the photo bytes are stored verbatim instead and
-    -- _message_for_openai base64-encodes segment.data directly.
-    v_store_node := format(
-      'SELECT ow.store_inbound_attachment(%L, %s, %L::jsonb, NULL, 2.0, $file::jsonb)::text AS stored',
-      p_agent_slug, p_message_id, p_meta::text);
-    RETURN df.http(v_getfile_url, 'POST',
-             jsonb_build_object('file_id', p_file_id)::text,
-             ow._telegram_headers(), 30) |=> 'meta'
-      ~> df.if(
-        'SELECT $meta.ok AND (ow._http_body_json($meta::jsonb)->>''ok'')::boolean',
-        v_fp_node |=> 'fp'
-        ~> df.http(v_file_base_url || '/$fp', 'GET', NULL, ow._telegram_headers(), 120) |=> 'file'
-        ~> v_store_node
-        ~> format('SELECT ow.start_agent_loop(%L, %s)::text AS loop_id', p_agent_slug, p_message_id),
-        format(
-          'SELECT ow.fail_inbound_attachment(%L, %s, ''getFile failed'')::text AS failed',
-          p_agent_slug, p_message_id
-        )
-        ~> format('SELECT ow.start_agent_loop(%L, %s)::text AS loop_id', p_agent_slug, p_message_id)
-      );
-  END IF;
-
-  -- Video path: ffmpeg.hls fetches file_url (built in-node from $fp) itself
-  -- and stores decodeable video segments; _message_for_openai runs
-  -- ffmpeg.thumbnail per segment for the sampled-frame summary.
-  v_store_node := format(
-    'SELECT ow.store_inbound_attachment(%L, %s, %L::jsonb, $url::text, 2.0, NULL)::text AS stored',
-    p_agent_slug, p_message_id, p_meta::text);
   RETURN df.http(v_getfile_url, 'POST',
            jsonb_build_object('file_id', p_file_id)::text,
            ow._telegram_headers(), 30) |=> 'meta'
     ~> df.if(
       'SELECT $meta.ok AND (ow._http_body_json($meta::jsonb)->>''ok'')::boolean',
+      -- The node SQL runs in its own transaction, so the build-time GUC bind
+      -- above does not carry over; bind the agent GUC inline (CROSS JOIN,
+      -- evaluated before the _telegram_file_url read) so RLS on ow.config
+      -- lets _telegram_file_url see the telegram_token row. Parenthesise the
+      -- #>> extraction: || binds looser than #>>, so without parens the
+      -- expression parses as (base || body) #>> path → text #>> unknown.
       format('SELECT ow._telegram_file_url(%L) || (ow._http_body_json($meta::jsonb) #>> ''{result,file_path}'') AS url FROM (SELECT set_config(''ow.current_agent_id'', %L, true)) AS cfg', p_agent_slug, v_agent_id::text) |=> 'url'
-      ~> v_store_node
+      ~> format(
+           'SELECT ow.store_inbound_attachment(%L, %s, %L::jsonb, $url::text, 2.0)::text AS stored',
+           p_agent_slug, p_message_id, p_meta::text
+         )
       ~> format('SELECT ow.start_agent_loop(%L, %s)::text AS loop_id', p_agent_slug, p_message_id),
       format(
         'SELECT ow.fail_inbound_attachment(%L, %s, ''getFile failed'')::text AS failed',
@@ -419,30 +381,23 @@ BEGIN
 END;
 $$;
 
--- Store the inbound attachment. Two ingest paths share one message-row shape
--- (a small `playlist_id` reference, no bytes on ow.messages):
+-- Store the inbound attachment by ingesting file_url with ffmpeg.hls. The
+-- network/decode call is folded in here: on success the message row carries
+-- only a small playlist_id reference; on failure the fail note is written
+-- in-place. NEVER RAISES: a raised node would roll back the un-blocking
+-- UPDATE, and a stuck-pending message is worse than a lost file (the content
+-- note is the visibility).
 --
---   * photo  — the download instance already did a df.http GET of file_url and
---     passes the response here as p_photo_http_response; store decodes the
---     base64 body and inserts it RAW as a single HLS segment. _message_for_openai
---     then base64-encodes segment.data directly as the data-URI. ffmpeg.hls is
---     NOT used for photos: it wraps a still image as opaque mpegts `bin_data`
---     with no decodeable video stream, so ffmpeg.thumbnail cannot extract a
---     frame. Storing the raw bytes keeps a real image the model can see.
---   * video — p_file_url is passed to ffmpeg.hls, which fetches the URL itself
---     and stores HLS segments with real video streams; _message_for_openai
---     runs ffmpeg.thumbnail per segment for the sampled-frame summary.
---
--- NEVER RAISES: a raised node would roll back the un-blocking UPDATE, and a
--- stuck-pending message is worse than a lost file (the content note is the
--- visibility).
+-- pg_ffmpeg v0.3.5+ is required: for still-image inputs (photos), hls() stores
+-- the original image bytes as one segment (bypassing the mpegts muxer that
+-- previously emitted opaque bin_data with no decodeable frame), so
+-- ffmpeg.thumbnail works on both photo and video segments.
 CREATE OR REPLACE FUNCTION ow.store_inbound_attachment(
   p_agent_slug text,
   p_message_id bigint,
   p_meta jsonb,
-  p_file_url text DEFAULT NULL,
-  p_segment_duration float DEFAULT 2.0,
-  p_photo_http_response jsonb DEFAULT NULL
+  p_file_url text,
+  p_segment_duration float DEFAULT 2.0
 )
 RETURNS text
 LANGUAGE plpgsql
@@ -455,51 +410,26 @@ DECLARE
   v_seg_int integer;
   v_mime text;
   v_attachment jsonb;
-  v_kind text := p_meta->>'kind';
-  v_body_b64 text;
-  v_bytes bytea;
-  v_status integer;
 BEGIN
   PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
   v_seg_int := greatest(coalesce(p_segment_duration::integer, 1), 1);
 
-  v_mime := coalesce(p_meta->>'mime_type', CASE v_kind
+  BEGIN
+    v_playlist_id := ffmpeg.hls(p_file_url, v_seg_int);
+  EXCEPTION WHEN OTHERS THEN
+    -- fold the failure into the message row instead of failing the instance
+    PERFORM ow.fail_inbound_attachment(p_agent_slug, p_message_id,
+      'ffmpeg.hls: ' || SQLERRM);
+    RETURN jsonb_build_object('ok', false, 'reason', SQLERRM)::text;
+  END;
+
+  v_mime := coalesce(p_meta->>'mime_type', CASE p_meta->>'kind'
                        WHEN 'photo' THEN 'image/jpeg'
                        WHEN 'video' THEN 'video/mp4'
                        ELSE 'application/octet-stream' END);
 
-  BEGIN
-    IF v_kind = 'photo' AND p_photo_http_response IS NOT NULL THEN
-      -- Photo path: decode the already-downloaded bytes and store them RAW as
-      -- a single-segment playlist (no mpegts wrapping, no ffmpeg.hls).
-      v_status := ow._http_status(p_photo_http_response);
-      IF v_status < 200 OR v_status >= 300 THEN
-        RAISE EXCEPTION 'photo download http %', v_status;
-      END IF;
-      v_body_b64 := coalesce(p_photo_http_response->>'body', '');
-      IF v_body_b64 = '' THEN
-        RAISE EXCEPTION 'photo download returned no body';
-      END IF;
-      v_bytes := decode(translate(v_body_b64, E'\n\r ', ''), 'base64');
-
-      INSERT INTO ffmpeg.hls_playlists(target_duration) VALUES (1)
-        RETURNING id INTO v_playlist_id;
-      INSERT INTO ffmpeg.hls_segments(playlist_id, segment_index, duration, data)
-        VALUES (v_playlist_id, 0, 1.0, v_bytes);
-    ELSE
-      -- Video path (default): ffmpeg.hls fetches file_url and stores
-      -- decodeable video segments.
-      v_playlist_id := ffmpeg.hls(p_file_url, v_seg_int);
-    END IF;
-  EXCEPTION WHEN OTHERS THEN
-    -- fold the failure into the message row instead of failing the instance
-    PERFORM ow.fail_inbound_attachment(p_agent_slug, p_message_id,
-      CASE v_kind WHEN 'photo' THEN 'photo download: ' ELSE 'ffmpeg.hls: ' END || SQLERRM);
-    RETURN jsonb_build_object('ok', false, 'reason', SQLERRM)::text;
-  END;
-
   v_attachment := jsonb_strip_nulls(jsonb_build_object(
-    'kind', v_kind,
+    'kind', p_meta->>'kind',
     'playlist_id', v_playlist_id,
     'mime_type', v_mime,
     'filename', p_meta->>'filename',
