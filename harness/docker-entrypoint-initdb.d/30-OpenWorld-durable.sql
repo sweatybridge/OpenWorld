@@ -2,9 +2,15 @@
 -- Trigger-driven agent loop
 --   Primary: an AFTER INSERT STATEMENT trigger on ow.messages starts a
 --   bounded df.loop whenever a role='user' row for the primary agent lands.
---   Each iteration: compose → LLM http → record assistant → run tool calls as
---   per-call instances under the acting role → loop until no tool calls or
---   max_turn. Outbound delivery is a separate row-level trigger (below).
+--   Each iteration: resolve pending attachment (if any) → compose → LLM http →
+--   record assistant → run tool calls as per-call instances under the acting
+--   role → loop until no tool calls or max_turn. Outbound delivery is a
+--   separate row-level trigger (below).
+--
+--   Inbound photo/video attachments are resolved INLINE as the first nodes of
+--   the loop body: getFile (df.http) → resolve_inbound_attachment (ffmpeg.hls +
+--   store playlist_id). No separate download instance is df.start-ed; the loop
+--   starts immediately on the trigger message (no deferral).
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION ow.start_agent_loop(
@@ -71,8 +77,19 @@ BEGIN
     v_acting_role := 'ow_agent_' || p_agent_slug;
   END IF;
 
+  -- Loop body: resolve pending attachment → compose → LLM → record → tools.
+  -- The resolve prefix (3 nodes) runs on every iteration but is a no-op once
+  -- the attachment is resolved: prepare_inbound_getfile returns '{}' when
+  -- there is no pending attachment, getFile gets an expected 400, and
+  -- resolve_inbound_attachment skips without touching the response. The cost
+  -- is one trivial HTTP call per iteration — negligible vs the LLM call that
+  -- follows.
   v_body :=
-    format('SELECT ow.compose_llm_request(%L)::text AS body', p_agent_slug) |=> 'request'
+    format('SELECT ow.prepare_inbound_getfile(%L, %s)::text AS gf_req', p_agent_slug, p_trigger_message_id) |=> 'gf_req'
+    ~> df.http(ow._telegram_api_url(p_agent_slug, 'getFile'), 'POST', '$gf_req',
+               ow._telegram_headers(), 30) |=> 'gf_resp'
+    ~> format('SELECT ow.resolve_inbound_attachment(%L, %s, $gf_resp::jsonb)::text AS resolved', p_agent_slug, p_trigger_message_id) |=> 'resolved'
+    ~> format('SELECT ow.compose_llm_request(%L)::text AS body', p_agent_slug) |=> 'request'
     ~> df.http(ow._llm_url(p_agent_slug), 'POST', '$request',
                ow._llm_headers(p_agent_slug), 120) |=> 'response'
     ~> df.if(
@@ -104,7 +121,10 @@ BEGIN
 END;
 $$;
 
--- AFTER INSERT STATEMENT trigger: start the primary loop when user messages land
+-- AFTER INSERT STATEMENT trigger: start the primary loop when user messages land.
+-- Inbound photo/video attachments are resolved inline as the first nodes of the
+-- loop body (see start_agent_loop), so there is no deferral: the trigger starts
+-- the loop immediately.
 CREATE OR REPLACE FUNCTION ow.after_user_message_loop()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -224,11 +244,216 @@ BEGIN
     format('SELECT ow.telegram_get_updates_body(%L, %s)::text AS body', p_agent_slug, p_timeout) |=> 'req'
     ~> df.http(ow._telegram_api_url(p_agent_slug, 'getUpdates'), 'POST', '$req',
                ow._telegram_headers(), p_timeout + 5) |=> 'resp'
-    ~> format('SELECT ow.poll_messages(%L, $resp::jsonb)::jsonb AS result', p_agent_slug)
+    ~> format('SELECT ow.poll_messages(%L, $resp::jsonb)::jsonb AS result', p_agent_slug) |=> 'poll'
   );
 
   SELECT df.start(v_future, v_label) INTO v_instance;
   RETURN v_instance;
+END;
+$$;
+
+-- ============================================================================
+-- Inbound attachment resolution (photo/video): inline nodes in the agent loop.
+--
+-- The agent loop body starts with three nodes that resolve any pending
+-- attachment on the trigger message:
+--   1. prepare_inbound_getfile  — SQL: read the trigger message's file_id
+--      and build the getFile request body (or '{}' when no attachment is
+--      pending, in which case the next two nodes are a harmless no-op).
+--   2. df.http(getFile)          — HTTP: call Telegram getFile.
+--   3. resolve_inbound_attachment — SQL: extract file_path from the response,
+--      build the file URL, ingest via ffmpeg.hls (stores HLS segments), and
+--      write playlist_id onto the message row. On failure (getFile error or
+--      ffmpeg.hls raises) the fail note is written in-place; the loop
+--      continues to compose_llm_request regardless.
+--
+-- No separate download instance is df.start-ed; the loop starts immediately on
+-- the trigger message (no deferral).
+-- ============================================================================
+
+-- Read the trigger message's pending attachment and return the getFile request
+-- body. When the message has no pending attachment (or is not a media
+-- message at all), return '{}' — the subsequent df.http(getFile) call will
+-- get an expected 400 from Telegram, and resolve_inbound_attachment ignores
+-- the response. Self-binds the agent GUC for RLS.
+CREATE OR REPLACE FUNCTION ow.prepare_inbound_getfile(
+  p_agent_slug text,
+  p_trigger_message_id bigint
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ow_tools, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_file_id text;
+BEGIN
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  SELECT payload->'attachment_meta'->>'file_id'
+    INTO v_file_id
+    FROM ow.messages
+    WHERE id = p_trigger_message_id AND agent_id = v_agent_id
+      AND payload->>'attachment_pending' = 'true';
+  IF v_file_id IS NULL OR v_file_id = '' THEN
+    RETURN '{}';
+  END IF;
+  RETURN jsonb_build_object('file_id', v_file_id)::text;
+END;
+$$;
+
+-- Resolve the pending attachment using the getFile HTTP response. Extracts
+-- file_path, builds the file URL, ingests via ffmpeg.hls, and writes
+-- playlist_id onto the message row. On any failure (getFile error, no
+-- file_path, ffmpeg.hls raises) the fail note is written in-place and the
+-- function returns ok=false — but it NEVER RAISES, so the loop continues to
+-- compose_llm_request regardless. When the trigger message has no pending
+-- attachment, the function is a no-op (returns ok=true, skipped=true).
+-- Self-binds the agent GUC for RLS.
+CREATE OR REPLACE FUNCTION ow.resolve_inbound_attachment(
+  p_agent_slug text,
+  p_trigger_message_id bigint,
+  p_getfile_response jsonb
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ow_tools, ffmpeg, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_pending boolean;
+  v_meta jsonb;
+  v_file_path text;
+  v_file_url text;
+  v_status integer;
+BEGIN
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+
+  SELECT coalesce((payload->>'attachment_pending')::boolean, false),
+         payload->'attachment_meta'
+    INTO v_pending, v_meta
+    FROM ow.messages
+    WHERE id = p_trigger_message_id AND agent_id = v_agent_id;
+
+  -- No pending attachment (text-only message, or already resolved in a
+  -- prior iteration): the getFile call was a wasted no-op with an expected
+  -- 400 — ignore it entirely.
+  IF NOT v_pending THEN
+    RETURN jsonb_build_object('ok', true, 'skipped', true)::text;
+  END IF;
+
+  -- getFile failed (non-2xx, ok:false, or missing file_path)
+  v_status := ow._http_status(p_getfile_response);
+  IF v_status < 200 OR v_status >= 300
+     OR coalesce((ow._http_body_json(p_getfile_response)->>'ok')::boolean, false) IS NOT TRUE THEN
+    PERFORM ow.fail_inbound_attachment(p_agent_slug, p_trigger_message_id, 'getFile failed');
+    RETURN jsonb_build_object('ok', false, 'reason', 'getFile failed')::text;
+  END IF;
+
+  v_file_path := ow._http_body_json(p_getfile_response) #>> '{result,file_path}';
+  IF v_file_path IS NULL OR v_file_path = '' THEN
+    PERFORM ow.fail_inbound_attachment(p_agent_slug, p_trigger_message_id, 'getFile returned no file_path');
+    RETURN jsonb_build_object('ok', false, 'reason', 'no file_path')::text;
+  END IF;
+
+  v_file_url := ow._telegram_file_url(p_agent_slug) || v_file_path;
+
+  -- Ingest via ffmpeg.hls (fetches the URL itself, stores HLS segments).
+  -- store_inbound_attachment handles the update + exception path.
+  RETURN ow.store_inbound_attachment(p_agent_slug, p_trigger_message_id, v_meta, v_file_url, 2.0);
+END;
+$$;
+
+-- Store the inbound attachment by ingesting file_url with ffmpeg.hls. The
+-- network/decode call is folded in here: on success the message row carries
+-- only a small playlist_id reference; on failure the fail note is written
+-- in-place. NEVER RAISES: a raised node would roll back the un-blocking
+-- UPDATE, and a stuck-pending message is worse than a lost file (the content
+-- note is the visibility).
+--
+-- pg_ffmpeg v0.3.5+ is required: for still-image inputs (photos), hls() stores
+-- the original image bytes as one segment (bypassing the mpegts muxer that
+-- previously emitted opaque bin_data with no decodeable frame), so
+-- ffmpeg.thumbnail works on both photo and video segments.
+CREATE OR REPLACE FUNCTION ow.store_inbound_attachment(
+  p_agent_slug text,
+  p_message_id bigint,
+  p_meta jsonb,
+  p_file_url text,
+  p_segment_duration float DEFAULT 2.0
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ow_tools, ffmpeg, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_playlist_id bigint;
+  v_seg_int integer;
+  v_mime text;
+  v_attachment jsonb;
+BEGIN
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  v_seg_int := greatest(coalesce(p_segment_duration::integer, 1), 1);
+
+  BEGIN
+    v_playlist_id := ffmpeg.hls(p_file_url, v_seg_int);
+  EXCEPTION WHEN OTHERS THEN
+    -- fold the failure into the message row instead of failing the instance
+    PERFORM ow.fail_inbound_attachment(p_agent_slug, p_message_id,
+      'ffmpeg.hls: ' || SQLERRM);
+    RETURN jsonb_build_object('ok', false, 'reason', SQLERRM)::text;
+  END;
+
+  v_mime := coalesce(p_meta->>'mime_type', CASE p_meta->>'kind'
+                       WHEN 'photo' THEN 'image/jpeg'
+                       WHEN 'video' THEN 'video/mp4'
+                       ELSE 'application/octet-stream' END);
+
+  v_attachment := jsonb_strip_nulls(jsonb_build_object(
+    'kind', p_meta->>'kind',
+    'playlist_id', v_playlist_id,
+    'mime_type', v_mime,
+    'filename', p_meta->>'filename',
+    'file_size', nullif(p_meta->>'file_size', '')::integer,
+    'width', nullif(p_meta->>'width', '')::integer,
+    'height', nullif(p_meta->>'height', '')::integer,
+    'duration', nullif(p_meta->>'duration', '')::integer
+  ));
+
+  UPDATE ow.messages
+    SET payload = (payload - 'attachment_pending') || jsonb_build_object('attachment', v_attachment)
+    WHERE id = p_message_id AND agent_id = v_agent_id;
+
+  RETURN jsonb_build_object('ok', true, 'playlist_id', v_playlist_id)::text;
+END;
+$$;
+
+-- Mark the inbound attachment as failed: clear attachment_pending and append a
+-- note to content (the visibility for a lost file). Used by the getFile-failed
+-- path (download_inbound_file_future's else branch) and as the in-place
+-- fallback inside store_inbound_attachment.
+CREATE OR REPLACE FUNCTION ow.fail_inbound_attachment(
+  p_agent_slug text,
+  p_message_id bigint,
+  p_reason text
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ow_tools, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+BEGIN
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  UPDATE ow.messages
+    SET payload = payload - 'attachment_pending',
+        content = content || format(' [attachment download failed: %s]', p_reason)
+    WHERE id = p_message_id AND agent_id = v_agent_id;
+  RETURN jsonb_build_object('ok', false, 'reason', p_reason)::text;
 END;
 $$;
 

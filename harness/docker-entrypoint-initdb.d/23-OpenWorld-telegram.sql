@@ -44,6 +44,28 @@ BEGIN
 END;
 $$;
 
+-- Base URL for Telegram file downloads: <api_base>/file/bot<token>/. The tail
+-- (the file_path returned by getFile) is interpolated by the caller, so this
+-- returns the bare prefix. Mirrors _telegram_api_url.
+CREATE OR REPLACE FUNCTION ow._telegram_file_url(p_agent_slug text)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+  v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_token text;
+  v_api_base text;
+BEGIN
+  v_token := ow._config_text(v_agent_id, 'telegram_token');
+  IF v_token IS NULL OR v_token = '' THEN
+    RAISE EXCEPTION 'agent % has no telegram_token config', p_agent_slug;
+  END IF;
+  v_api_base := ow._config_text(v_agent_id, 'telegram_api_base', 'https://api.telegram.org');
+  RETURN rtrim(v_api_base, '/') || '/file/bot' || v_token || '/';
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION ow._telegram_headers()
 RETURNS jsonb
 LANGUAGE sql
@@ -104,7 +126,10 @@ $$;
 
 -- Long-poll intake: parse Telegram getUpdates, track senders, and batch-insert
 -- user messages (channel='telegram', chat_id set). The insert fires the
--- user→loop trigger; no explicit start_turn. Returns {accepted, ignored}.
+-- user→loop trigger; no explicit start_turn. Returns {accepted, ignored,
+-- downloads}. `downloads` carries one entry per accepted photo/video file
+-- (keyed by update_id) for start_inbound_downloads to df.start per file as
+-- its own one-shot durable instance.
 CREATE OR REPLACE FUNCTION ow.poll_messages(
   p_agent_slug text,
   p_http_response jsonb
@@ -129,6 +154,17 @@ DECLARE
   v_accepted jsonb := '[]'::jsonb;
   v_accepted_count integer := 0;
   v_ignored integer := 0;
+  v_downloads jsonb := '[]'::jsonb;
+  v_photo jsonb;
+  v_best jsonb;
+  v_size integer;
+  v_best_size integer;
+  v_ps jsonb;
+  v_video jsonb;
+  v_meta jsonb;
+  v_kind text;
+  v_caption text;
+  v_placeholder text;
 BEGIN
   -- Bind the agent GUC (the inbox loop runs as the agent role, not
   -- service-bypass) before any agent-scoped config/message read.
@@ -140,7 +176,7 @@ BEGIN
   v_body := ow._http_body_json(p_http_response);
 
   IF v_status < 200 OR v_status >= 300 OR coalesce((v_body->>'ok')::boolean, false) IS NOT TRUE THEN
-    RETURN jsonb_build_object('accepted', 0, 'ignored', 0, 'error', true);
+    RETURN jsonb_build_object('accepted', 0, 'ignored', 0, 'downloads', '[]'::jsonb, 'error', true);
   END IF;
 
   FOR v_update IN SELECT value FROM jsonb_array_elements(coalesce(v_body->'result', '[]'::jsonb))
@@ -158,9 +194,65 @@ BEGIN
     v_message_thread_id := v_message->>'message_thread_id';
     v_text := coalesce(v_message->>'text', v_message->>'caption', '');
 
+    -- Supported file detection. Only photo and video are accepted; other
+    -- media (voice/audio/document/sticker/…) remain ignored for now. A
+    -- message is accepted when it has non-empty text/caption OR a supported
+    -- file, so a photo with no caption finally reaches ow.messages.
+    v_meta := NULL;
+    v_kind := NULL;
+    v_photo := v_message->'photo';
+    v_video := v_message->'video';
+    IF v_photo IS NOT NULL AND jsonb_typeof(v_photo) = 'array' AND jsonb_array_length(v_photo) > 0 THEN
+      v_best := NULL;
+      v_best_size := -1;
+      FOR v_ps IN SELECT value FROM jsonb_array_elements(v_photo)
+      LOOP
+        v_size := coalesce((v_ps->>'file_size')::integer, 0);
+        IF v_size = 0 THEN
+          v_size := coalesce((v_ps->>'width')::integer, 0) * coalesce((v_ps->>'height')::integer, 0);
+        END IF;
+        IF v_size > v_best_size THEN
+          v_best := v_ps;
+          v_best_size := v_size;
+        END IF;
+      END LOOP;
+      v_kind := 'photo';
+      v_meta := jsonb_strip_nulls(jsonb_build_object(
+        'kind', 'photo',
+        'file_id', v_best->>'file_id',
+        'file_unique_id', v_best->>'file_unique_id',
+        'file_size', nullif(v_best->>'file_size', '')::integer,
+        'mime_type', coalesce(v_best->>'mime_type', 'image/jpeg'),
+        'filename', v_best->>'file_name',
+        'width', nullif(v_best->>'width', '')::integer,
+        'height', nullif(v_best->>'height', '')::integer
+      ));
+      v_placeholder := format('[photo %sx%s]',
+        coalesce(v_meta->>'width', '?'),
+        coalesce(v_meta->>'height', '?'));
+    ELSIF v_video IS NOT NULL AND jsonb_typeof(v_video) = 'object' THEN
+      v_kind := 'video';
+      v_meta := jsonb_strip_nulls(jsonb_build_object(
+        'kind', 'video',
+        'file_id', v_video->>'file_id',
+        'file_unique_id', v_video->>'file_unique_id',
+        'file_size', nullif(v_video->>'file_size', '')::integer,
+        'mime_type', coalesce(v_video->>'mime_type', 'video/mp4'),
+        'filename', v_video->>'file_name',
+        'width', nullif(v_video->>'width', '')::integer,
+        'height', nullif(v_video->>'height', '')::integer,
+        'duration', nullif(v_video->>'duration', '')::integer
+      ));
+      v_placeholder := format('[video %s %sx%s (%s)]',
+        coalesce(v_meta->>'filename', 'clip'),
+        coalesce(v_meta->>'width', '?'),
+        coalesce(v_meta->>'height', '?'),
+        coalesce(v_meta->>'mime_type', 'video/mp4'));
+    END IF;
+
     IF v_message_chat_id IS DISTINCT FROM v_chat_id
        OR (v_thread_id IS NOT NULL AND v_message_thread_id IS DISTINCT FROM v_thread_id)
-       OR v_text = '' THEN
+       OR (v_text = '' AND v_kind IS NULL) THEN
       v_ignored := v_ignored + 1;
       CONTINUE;
     END IF;
@@ -176,21 +268,49 @@ BEGIN
       );
     END IF;
 
+    -- Content for a file-only message is a placeholder; a caption, when
+    -- present, is used as today. Mixed text+file keeps the caption-as-text.
+    IF v_text = '' AND v_kind IS NOT NULL THEN
+      v_text := v_placeholder;
+    END IF;
+
     v_accepted := v_accepted || jsonb_build_array(jsonb_build_object(
       'update_id', v_update_id,
       'text', v_text,
       'chat_id', v_message_chat_id,
-      'update', v_update
+      'update', v_update,
+      'attachment_meta', v_meta,
+      'attachment_pending', v_kind IS NOT NULL
     ));
     v_accepted_count := v_accepted_count + 1;
+
+    IF v_kind IS NOT NULL THEN
+      v_downloads := v_downloads || jsonb_build_array(jsonb_build_object(
+        'update_id', v_update_id,
+        'kind', v_kind,
+        'meta', v_meta
+      ));
+    END IF;
   END LOOP;
 
-  -- batch insert (one statement → one user→loop trigger fire)
+  -- batch insert (one statement → one user→loop trigger fire). A pending
+  -- attachment carries payload.attachment_meta + attachment_pending: true,
+  -- which the trigger deferral (30-OpenWorld-durable.sql) keys on to hold the
+  -- agent loop until the download instance writes the playlist_id.
   IF v_accepted_count > 0 THEN
     INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
     SELECT v_agent_id, 'user',
            format('[telegram %s] %s', (e->>'update_id')::bigint, e->>'text'),
-           jsonb_build_object('telegram_update', e->'update'),
+           jsonb_build_object(
+             'telegram_update', e->'update'
+           ) || CASE
+             WHEN (e->>'attachment_pending')::boolean
+             THEN jsonb_build_object(
+               'attachment_meta', e->'attachment_meta',
+               'attachment_pending', true
+             )
+             ELSE '{}'::jsonb
+           END,
            'telegram', e->>'chat_id'
     FROM jsonb_array_elements(v_accepted) AS e
     ON CONFLICT DO NOTHING;
@@ -200,7 +320,12 @@ BEGIN
     PERFORM ow.set_config(p_agent_slug, 'telegram_update_offset', to_jsonb(v_max_update_id + 1));
   END IF;
 
-  RETURN jsonb_build_object('accepted', v_accepted_count, 'ignored', v_ignored, 'error', false);
+  RETURN jsonb_build_object(
+    'accepted', v_accepted_count,
+    'ignored', v_ignored,
+    'downloads', v_downloads,
+    'error', false
+  );
 END;
 $$;
 
