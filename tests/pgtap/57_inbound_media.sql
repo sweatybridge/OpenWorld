@@ -294,15 +294,93 @@ BEGIN
     'photo attachment with no playlist_id: content stays a string';
 END $$;
 
+-- ===== prepare_inbound_getfile: reads file_id from the pending message =======
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_body text;
+BEGIN
+  -- pending photo: returns {"file_id":"fid123"}
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', '[photo 1x1]',
+            jsonb_build_object('attachment_pending', true,
+              'attachment_meta', jsonb_build_object('kind','photo','file_id','fid123','mime_type','image/jpeg')),
+            'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+
+  SELECT ow.prepare_inbound_getfile('primary', v_msg_id) INTO v_body;
+  ASSERT (v_body::jsonb->>'file_id') = 'fid123', 'prepare returns file_id for pending attachment';
+
+  -- after resolving, prepare returns '{}' (no longer pending)
+  PERFORM ow.fail_inbound_attachment('primary', v_msg_id, 'test');
+  SELECT ow.prepare_inbound_getfile('primary', v_msg_id) INTO v_body;
+  ASSERT v_body = '{}', 'prepare returns {} after attachment resolved/failed';
+END $$;
+
+-- ===== prepare_inbound_getfile: no pending attachment → '{}' ================
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_body text;
+BEGIN
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', 'just text', '{}'::jsonb, 'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+  SELECT ow.prepare_inbound_getfile('primary', v_msg_id) INTO v_body;
+  ASSERT v_body = '{}', 'prepare returns {} for text-only message';
+END $$;
+
+-- ===== resolve_inbound_attachment: no pending → no-op (skipped) ===============
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_result text;
+BEGIN
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', 'just text', '{}'::jsonb, 'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+  SELECT ow.resolve_inbound_attachment('primary', v_msg_id,
+    jsonb_build_object('status', 400, 'body', '{"ok":false}', 'ok', true)) INTO v_result;
+  ASSERT (v_result::jsonb->>'ok') = 'true', 'resolve returns ok=true for no pending';
+  ASSERT (v_result::jsonb->>'skipped') = 'true', 'resolve returns skipped=true for no pending';
+END $$;
+
+-- ===== resolve_inbound_attachment: getFile failure → fail note ===============
+DO $$
+DECLARE
+  v_msg_id bigint;
+  v_result text;
+  v_payload jsonb;
+  v_content text;
+BEGIN
+  INSERT INTO ow.messages(agent_id, role, content, payload, channel, chat_id)
+    VALUES (1, 'user', '[photo 1x1]',
+            jsonb_build_object('attachment_pending', true,
+              'attachment_meta', jsonb_build_object('kind','photo','file_id','fid','mime_type','image/jpeg')),
+            'telegram', 'CZ1')
+    RETURNING id INTO v_msg_id;
+
+  -- simulate a getFile 400 response
+  SELECT ow.resolve_inbound_attachment('primary', v_msg_id,
+    jsonb_build_object('status', 400, 'body', '{"ok":false,"description":"Bad Request"}', 'ok', true)) INTO v_result;
+  ASSERT (v_result::jsonb->>'ok') = 'false', 'resolve reports ok=false on getFile failure';
+
+  SELECT payload, content INTO v_payload, v_content
+    FROM ow.messages WHERE id = v_msg_id;
+  ASSERT NOT (v_payload ? 'attachment_pending'), 'resolve clears pending on getFile failure';
+  ASSERT v_content LIKE '%[attachment download failed: getFile failed]%',
+    'resolve appends getFile-failed note to content';
+END $$;
+
 -- ===== object presence =======================================================
 SELECT ok(to_regprocedure('ow.store_inbound_attachment(text,bigint,jsonb,text,float8)') IS NOT NULL,
   'ow.store_inbound_attachment(text,bigint,jsonb,text,float8) exists');
 SELECT ok(to_regprocedure('ow.fail_inbound_attachment(text,bigint,text)') IS NOT NULL,
   'ow.fail_inbound_attachment(text,bigint,text) exists');
-SELECT ok(to_regprocedure('ow.start_inbound_downloads(text,jsonb)') IS NOT NULL,
-  'ow.start_inbound_downloads(text,jsonb) exists');
-SELECT ok(to_regprocedure('ow.download_inbound_file_future(text,bigint,text,text,jsonb)') IS NOT NULL,
-  'ow.download_inbound_file_future(text,bigint,text,text,jsonb) exists');
+SELECT ok(to_regprocedure('ow.prepare_inbound_getfile(text,bigint)') IS NOT NULL,
+  'ow.prepare_inbound_getfile(text,bigint) exists');
+SELECT ok(to_regprocedure('ow.resolve_inbound_attachment(text,bigint,jsonb)') IS NOT NULL,
+  'ow.resolve_inbound_attachment(text,bigint,jsonb) exists');
 SELECT ok(to_regprocedure('ow._telegram_file_url(text)') IS NOT NULL,
   'ow._telegram_file_url(text) exists');
 
