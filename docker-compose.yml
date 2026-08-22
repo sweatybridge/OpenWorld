@@ -37,6 +37,8 @@ services:
       - --set=ON_ERROR_STOP=1
       - --set=api_key=${OPENWORLD_API_KEY:-}
       - --set=exa_api_key=${OPENWORLD_EXA_API_KEY:-}
+      - --set=sdcpp_api_base=${OPENWORLD_SDCPP_API_BASE:-}
+      - --set=sdcpp_api_key=${OPENWORLD_SDCPP_API_KEY:-}
       - --set=model=${OPENWORLD_MODEL:-Gemma4-26B-A4B}
       - --set=api_base=${OPENWORLD_API_BASE:-http://localhost:11434/v1}
       - --set=temperature=${OPENWORLD_TEMPERATURE:-1.0}
