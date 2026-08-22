@@ -19,7 +19,7 @@ import {
   traceTurn,
   workflowDetail,
 } from "./queries.js";
-import { maskConfig } from "./mask.js";
+import { maskConfig, redactTelegramTokensDeep } from "./mask.js";
 
 function parseIntOrNull(v: unknown): number | null {
   const n = parseInt(String(v ?? ""), 10);
@@ -75,7 +75,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(404);
       return { error: "not found" };
     }
-    return detail;
+    // df.instance_nodes.query / .result (and df.result / executions output)
+    // contain the resolved Telegram URL with the bot token in its path; redact
+    // before leaving the server. See mask.redactTelegramTokensDeep.
+    return redactTelegramTokensDeep(detail);
   });
 
   app.get("/api/agents", async () => ({ rows: await listAgents() }));
@@ -88,7 +91,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: "bad message id" };
     }
-    return { rows: await traceTurn(id) };
+    return { rows: redactTelegramTokensDeep(await traceTurn(id)) };
   });
 
   app.get("/api/agents/:id/messages", async (req, reply) => {
