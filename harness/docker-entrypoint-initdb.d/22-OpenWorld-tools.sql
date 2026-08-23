@@ -890,7 +890,7 @@ COMMENT ON FUNCTION ow_tools._tool_webfetch(text, integer) IS 'Fetch an HTTP or 
 --   then queues the returned base64 container as an outbound Telegram video
 --   attachment via queue_outbound_attachment — so the video bytes never enter
 --   the model context, only a small JSON summary does. When this tool is
---   present in a turn, start_tool_cells raises await_tool_calls' per-turn
+--   present in a turn, start_tool_calls raises await_tool_calls' per-turn
 --   timeout to 600s (see start_tool_calls), since short clips can take minutes.
 --   The sdcpp endpoint host must be in pg_durable's HTTP egress allowlist.
 -- ============================================================================
@@ -932,7 +932,8 @@ $$;
 -- self-resolves chat_id when NULL). On failed / cancelled / missing bytes it
 -- returns an error summary WITHOUT raising, so the turn continues and the model
 -- sees what went wrong. p_chat_id is resolved at graph-build time (the latest
--- user message's chat) and baked into the node. Pure w.r.t. its args.
+-- user message's chat) and baked into the node. The polling node runs in a
+-- fresh transaction, so the completed path rebinds agent context before queueing.
 CREATE OR REPLACE FUNCTION ow_tools._sdcpp_finalize_video(
   p_agent_slug text,
   p_envelope jsonb,
@@ -977,6 +978,7 @@ BEGIN
   v_ext  := CASE v_fmt WHEN 'webp' THEN 'webp' WHEN 'avi' THEN 'avi' ELSE 'webm' END;
   v_filename := coalesce(nullif(p_filename, ''), 'generated_video.' || v_ext);
 
+  PERFORM set_config('ow.current_agent_id', ow.agent_id(p_agent_slug)::text, true);
   PERFORM ow.queue_outbound_attachment(
     p_agent_slug, v_b64, 'video', v_filename,
     nullif(p_caption, ''), v_mime, nullif(p_chat_id, ''));

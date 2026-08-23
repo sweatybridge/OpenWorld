@@ -2,17 +2,11 @@
 -- stable-diffusion.cpp server + df.start (polling a real job), which the test
 -- harness can't run. So we cover the pure pieces: the df.http-envelope status
 -- terminality check, poll-URL construction, the error-result builder, the
--- non-completed finalize branch (no queue side effect), and the graph BUILD
--- (config-gated, endpoint/chat_id baked in as literals — no df.start needed).
+-- finalize branches (including completed queueing under RLS), and the graph
+-- BUILD (config-gated, endpoint/chat_id baked in as literals — no df.start).
 \set ON_ERROR_STOP on
 BEGIN;
 SELECT no_plan();
-
--- _sdcpp_finalize_video's completed branch calls queue_outbound_attachment
--- (SECURITY DEFINER owner ow_agent_primary); its INSERT into ow.messages is
--- agent-scoped under RLS, so bind the agent GUC for the whole transaction (the
--- message triggers are disabled in 00_setup.sql, so no df.start side effect).
-SELECT set_config('ow.current_agent_id', '1', true);
 
 -- _sdcpp_job_terminal: a df.http envelope {status, body, ok, ...}. Terminal when
 -- the call did not succeed (ok=false, e.g. 404 gone) OR the job body status is
@@ -77,8 +71,9 @@ SELECT is((ow_tools._sdcpp_finalize_video('primary',
 
 -- _sdcpp_finalize_video: the completed branch queues an outbound video. Runs in
 -- the BEGIN/ROLLBACK so the queued system message is discarded. queue_outbound_
--- attachment is SECURITY DEFINER; p_chat_id NULL falls back to config (unset
--- here) which is fine for the INSERT.
+-- attachment is SECURITY DEFINER under agent-scoped RLS. Clear the agent GUC to
+-- model the polling node's fresh transaction and prove finalize binds it itself.
+SELECT set_config('ow.current_agent_id', '', true);
 SELECT is((ow_tools._sdcpp_finalize_video('primary',
   '{"ok":true,"body":"{\"status\":\"completed\",\"result\":{\"b64_json\":\"AAAA\",\"mime_type\":\"video/webm\",\"output_format\":\"webm\",\"fps\":16,\"frame_count\":33}}"}'::jsonb,
   p_caption => 'a clip')::jsonb)->>'queued',
@@ -96,7 +91,7 @@ SELECT is((ow_tools._sdcpp_finalize_video('primary',
 
 -- _tool_generate_video: error returns + graph build. The build reads agent
 -- config under RLS+GUC; we run as the superuser test session (BYPASSRLS) and
--- bind the agent GUC to the fixture primary (id=1) — already set above.
+-- bind the agent GUC to the fixture primary (id=1).
 SELECT set_config('ow.current_agent_id', '1', true);
 
 SELECT matches(ow_tools._tool_generate_video(p_prompt => ''),
