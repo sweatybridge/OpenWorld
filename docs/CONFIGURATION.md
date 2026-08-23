@@ -38,6 +38,10 @@ docker compose run --rm agent-init
 | `OPENWORLD_TELEGRAM_THREAD_ID` | Optional Telegram forum topic id. | empty |
 | `OPENWORLD_TELEGRAM_API_BASE` | Telegram API base URL. | `https://api.telegram.org` |
 | `OPENWORLD_TELEGRAM_POLL_TIMEOUT` | Telegram polling timeout in seconds. | `60` |
+| `OPENWORLD_CAMERA_FEED_URL` | Optional stable camera stream URL; empty disables startup. | empty |
+| `OPENWORLD_CAMERA_SEGMENT_DURATION` | Target HLS segment duration in seconds. | `2` |
+| `OPENWORLD_CAMERA_STALL_TIMEOUT` | Seconds without input before `hls_live` reports a stall. | `10` |
+| `OPENWORLD_CAMERA_RETENTION_SEGMENTS` | Maximum completed camera segments retained. | `300` |
 | `OPENWORLD_DASHBOARD_PASSWORD` | Password for the `ow_dashboard` DB role. | `dashboard` |
 | `OPENWORLD_DASHBOARD_TOKEN` | Optional bearer token required by the dashboard API. | empty |
 
@@ -111,6 +115,51 @@ messages as `[telegram <update_id>] ...` user messages.
 Outbound delivery is trigger-driven: any `assistant` or `system` row inserted
 into `ow.messages` with `channel = 'telegram'` and a non-empty payload
 starts a one-shot durable send workflow for that message.
+
+## Camera Feed
+
+Set `OPENWORLD_CAMERA_FEED_URL` to seed the primary agent's optional live
+camera ingest workflow. The URL must be a stable stream that FFmpeg can open,
+such as an RTSP/HTTP stream or a local SDP file URL. `pg_ffmpeg.hls_live`
+keeps the source connection open and commits completed HLS segments while the
+workflow is running. A parallel retention loop keeps only the newest
+`OPENWORLD_CAMERA_RETENTION_SEGMENTS` rows (300 two-second segments is about ten
+minutes of video).
+
+The camera URL is saved as secret `ow.config`, but pg_ffmpeg also records it in
+`ffmpeg.hls_playlists.source_url` as the stream key. Avoid credentials in the
+URL when roles with direct media-table access are not fully trusted.
+
+Each agent may run one camera workflow under its own database role. For
+example, to start a feed for the sidecar directly from an administrator `psql`
+session:
+
+```sql
+SET ROLE ow_agent_sidecar;
+SELECT ow.ensure_camera_ingest_loop('sidecar', 'rtsp://camera/live');
+RESET ROLE;
+```
+
+The role/slug match is enforced by the camera helpers, so an agent can resolve,
+stop, or prune only its own configured stream.
+
+Stop the active feed gracefully from `psql`:
+
+```sql
+SET ROLE ow_agent_primary;
+SELECT ow.stop_camera_ingest_loop('primary');
+RESET ROLE;
+```
+
+To change the URL or any camera setting, stop the active feed, update `.env`,
+and rerun the seed job:
+
+```bash
+docker compose run --rm agent-init
+```
+
+To disable ingest, clear `OPENWORLD_CAMERA_FEED_URL` and rerun the same seed
+command; it requests the same graceful stop automatically.
 
 ## Dashboard
 

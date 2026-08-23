@@ -458,6 +458,196 @@ END;
 $$;
 
 -- ============================================================================
+-- Optional live camera ingest (per agent): hls_live + bounded segment retention
+--
+-- hls_live is a top-level procedure that holds one backend connection open and
+-- commits every completed segment. A parallel infinite branch periodically
+-- prunes old segments. df.race ties their lifetimes together: a graceful
+-- hls_live_stop completes the CALL and cancels the pruning branch.
+-- ============================================================================
+
+-- Bind camera operations to the calling agent role. Besides protecting each
+-- agent's secret URL, this ensures a retention loop can only resolve and prune
+-- the stream configured by the agent that submitted it.
+CREATE OR REPLACE FUNCTION ow._camera_agent_id(p_agent_slug text)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, public, pg_temp
+AS $$
+DECLARE
+  v_expected_role text := 'ow_agent_' || p_agent_slug;
+  v_agent_id bigint;
+BEGIN
+  IF current_user::text IS DISTINCT FROM v_expected_role THEN
+    RAISE EXCEPTION 'camera ingest for agent % must run as role %',
+      p_agent_slug, v_expected_role;
+  END IF;
+
+  v_agent_id := ow.agent_id(p_agent_slug);
+  PERFORM set_config('ow.current_agent_id', v_agent_id::text, true);
+  RETURN v_agent_id;
+END;
+$$;
+
+-- Resolve the secret URL at execution time instead of embedding it in the
+-- durable graph stored in df.nodes. hls_live itself records source_url in its
+-- playlist table because the URL is the extension's stable stream key.
+CREATE OR REPLACE FUNCTION ow._camera_feed_url(p_agent_slug text DEFAULT 'primary')
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint;
+  v_url text;
+BEGIN
+  v_agent_id := ow._camera_agent_id(p_agent_slug);
+  v_url := ow._config_text(v_agent_id, 'camera_feed_url');
+  IF v_url IS NULL OR btrim(v_url) = '' THEN
+    RAISE EXCEPTION 'camera feed is not configured for agent %', p_agent_slug;
+  END IF;
+  RETURN v_url;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ow.prune_camera_feed(
+  p_agent_slug text DEFAULT 'primary',
+  p_retention_segments integer DEFAULT 300
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ffmpeg, public, pg_temp
+AS $$
+DECLARE
+  v_url text;
+  v_deleted integer;
+BEGIN
+  IF p_retention_segments <= 0 THEN
+    RAISE EXCEPTION 'camera retention_segments must be greater than 0';
+  END IF;
+
+  v_url := ow._camera_feed_url(p_agent_slug);
+  WITH live_playlist AS (
+    SELECT p.id,
+           (SELECT max(s.segment_index)
+              FROM ffmpeg.hls_segments s
+             WHERE s.playlist_id = p.id) AS max_segment_index
+      FROM ffmpeg.hls_playlists p
+     WHERE p.source_url = v_url
+  )
+  DELETE FROM ffmpeg.hls_segments s
+   USING live_playlist p
+   WHERE s.playlist_id = p.id
+     AND s.segment_index <= p.max_segment_index - p_retention_segments;
+
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ow.ensure_camera_ingest_loop(
+  p_agent_slug text DEFAULT 'primary',
+  p_url text DEFAULT NULL,
+  p_segment_duration integer DEFAULT 2,
+  p_stall_timeout double precision DEFAULT 10.0,
+  p_retention_segments integer DEFAULT 300
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ffmpeg, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint;
+  v_label text := format('ow:%s:camera', p_agent_slug);
+  v_existing text;
+  v_existing_url text;
+  v_ingest text;
+  v_prune text;
+  v_instance text;
+BEGIN
+  v_agent_id := ow._camera_agent_id(p_agent_slug);
+  IF p_url IS NULL OR btrim(p_url) = '' THEN
+    RAISE EXCEPTION 'camera feed URL must not be empty';
+  END IF;
+  IF p_segment_duration <= 0 THEN
+    RAISE EXCEPTION 'camera segment_duration must be greater than 0';
+  END IF;
+  IF p_stall_timeout::text IN ('NaN', 'Infinity', '-Infinity')
+     OR p_stall_timeout <= 0 THEN
+    RAISE EXCEPTION 'camera stall_timeout must be finite and greater than 0';
+  END IF;
+  IF p_retention_segments <= 0 THEN
+    RAISE EXCEPTION 'camera retention_segments must be greater than 0';
+  END IF;
+
+  SELECT id INTO v_existing
+    FROM df.instances
+    WHERE label = v_label AND status IN ('pending', 'running')
+    LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    v_existing_url := ow._config_text(v_agent_id, 'camera_feed_url');
+    IF v_existing_url IS DISTINCT FROM p_url
+       OR coalesce(ow._config_text(v_agent_id, 'camera_segment_duration'), '2')::integer
+            IS DISTINCT FROM p_segment_duration
+       OR coalesce(ow._config_text(v_agent_id, 'camera_stall_timeout'), '10')::double precision
+            IS DISTINCT FROM p_stall_timeout
+       OR coalesce(ow._config_text(v_agent_id, 'camera_retention_segments'), '300')::integer
+            IS DISTINCT FROM p_retention_segments THEN
+      RAISE EXCEPTION
+        'camera ingest is already running for agent %; stop it before changing camera settings',
+        p_agent_slug;
+    END IF;
+    RETURN v_existing;
+  END IF;
+
+  PERFORM ow.set_config(p_agent_slug, 'camera_feed_url', to_jsonb(p_url), true);
+  PERFORM ow.set_config(p_agent_slug, 'camera_segment_duration', to_jsonb(p_segment_duration));
+  PERFORM ow.set_config(p_agent_slug, 'camera_stall_timeout', to_jsonb(p_stall_timeout));
+  PERFORM ow.set_config(p_agent_slug, 'camera_retention_segments', to_jsonb(p_retention_segments));
+
+  -- CALL remains the top-level SQL statement inside its activity connection,
+  -- which is required for hls_live's per-segment COMMIT AND CHAIN behavior.
+  v_ingest := format(
+    'CALL ffmpeg.hls_live(ow._camera_feed_url(%L), %s, %s)',
+    p_agent_slug, p_segment_duration, p_stall_timeout
+  );
+  v_prune := df.loop(
+    format('SELECT ow.prune_camera_feed(%L, %s)::text AS deleted',
+           p_agent_slug, p_retention_segments)
+    ~> df.sleep(greatest(p_segment_duration, 1))
+  );
+
+  SELECT df.start(df.race(v_ingest, v_prune), v_label) INTO v_instance;
+  RETURN v_instance;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ow.stop_camera_ingest_loop(
+  p_agent_slug text DEFAULT 'primary'
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ffmpeg, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint;
+  v_url text;
+BEGIN
+  v_agent_id := ow._camera_agent_id(p_agent_slug);
+  v_url := ow._config_text(v_agent_id, 'camera_feed_url');
+  IF v_url IS NULL OR btrim(v_url) = '' THEN
+    RETURN false;
+  END IF;
+  RETURN ffmpeg.hls_live_stop(v_url);
+END;
+$$;
+
+-- ============================================================================
 -- Cron-driven agent loop (sidecar): on schedule, append a system prompt
 -- and start that agent's loop (tools run as the agent's own role)
 -- ============================================================================

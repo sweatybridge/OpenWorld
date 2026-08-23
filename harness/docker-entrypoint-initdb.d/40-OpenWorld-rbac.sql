@@ -334,6 +334,16 @@ GRANT USAGE, SELECT ON SEQUENCE ffmpeg.hls_playlists_id_seq, ffmpeg.hls_segments
   TO ow_anonymous, ow_authenticated, ow_service,
      ow_agent_primary, ow_agent_sidecar;
 
+-- Each agent may own a camera workflow. hls_live claims/releases its playlist
+-- and updates a heartbeat; its retention branch deletes old segments. The ow
+-- helpers bind each operation to the calling agent's own configured stream.
+GRANT EXECUTE ON PROCEDURE ffmpeg.hls_live(text, integer, double precision)
+  TO ow_agent_primary, ow_agent_sidecar;
+GRANT UPDATE ON ffmpeg.hls_playlists
+  TO ow_agent_primary, ow_agent_sidecar;
+GRANT DELETE ON ffmpeg.hls_segments
+  TO ow_agent_primary, ow_agent_sidecar;
+
 -- TODO: move this function to ow_tools or telegram schema
 GRANT EXECUTE ON FUNCTION ow.queue_outbound_attachment(text, text, text, text, text, text, text)
   TO ow_anonymous, ow_authenticated;
@@ -370,14 +380,15 @@ GRANT ow_service TO ow_agent_sidecar;
 
 -- SECURITY DEFINER entry-point starters, owned by the agent whose context they
 -- submit as (df.start submits as the owner): the telegram inbox loop (primary),
--- the cron loop (sidecar), and queue_outbound_attachment (primary — it is
--- called from the anonymous/authenticated acting role and needs the INSERT that
--- only the primary owner grants).
+-- the cron loop (sidecar), and queue_outbound_attachment
+-- (primary — it is called from the anonymous/authenticated acting role and
+-- needs the INSERT that only the primary owner grants).
 -- SECURITY INVOKER (they inherit the caller's identity; in every live path the
--- caller is the loop / message-inserter role ow_agent_primary, so df.start
--- still submits as primary): start_agent_loop, after_user_message_loop,
--- after_outbound_message_send, send_message, send_message_future. Ownership is
--- inert for INVOKER functions, so these are not re-owned here.
+-- caller is the relevant agent role, so df.start submits as that agent):
+-- start_agent_loop, ensure_camera_ingest_loop, stop_camera_ingest_loop,
+-- after_user_message_loop, after_outbound_message_send, send_message, and
+-- send_message_future. Ownership is inert for INVOKER functions, so these are
+-- not re-owned here.
 ALTER FUNCTION ow.ensure_telegram_inbox_loop(text, integer) OWNER TO ow_agent_primary;
 ALTER FUNCTION ow.ensure_agent_cron_loop(text, text, text, text) OWNER TO ow_agent_sidecar;
 ALTER FUNCTION ow.queue_outbound_attachment(text, text, text, text, text, text, text) OWNER TO ow_agent_primary;

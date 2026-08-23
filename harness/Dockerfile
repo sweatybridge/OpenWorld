@@ -10,15 +10,16 @@ ARG PG_SSH_VERSION=0.3.0
 ARG PG_SSH_REPO=sweatybridge/pg_ssh
 ARG PG_SSH_SHA256=0d641c13f50555b40c19d986745cc9114c3453bca3e7aac08c57b196147d7a84
 
-ARG PG_FFMPEG_VERSION=0.3.5
+ARG PG_FFMPEG_VERSION=0.4.0
 ARG PG_FFMPEG_REPO=sweatybridge/pg_ffmpeg
-# pg-ffmpeg-pg18_0.3.5-1.trixie_amd64.deb. The deb's Depends pull the FFmpeg 7.x
+# pg-ffmpeg-pg18_0.4.0-1.trixie_amd64.deb. The deb's Depends pull the FFmpeg 7.x
 # runtime shared libs (libavcodec/libavformat/...) from Debian trixie, so no PPA
-# and no shared_preload_libraries are required (pg_ffmpeg is SQL functions only).
-# v0.3.5 fixes hls() on still-image inputs: the muxer is bypassed for a single
-# frame, so the segment stores the original image bytes verbatim and
-# ffmpeg.thumbnail decodes them directly (no mpegts `bin_data` wrapping).
-ARG PG_FFMPEG_SHA256=3e771c07c09f44f75af4d8e1aca90b19fa9e252966d05a44490893cc3a1551cd
+# and no shared_preload_libraries are required (pg_ffmpeg uses SQL-callable
+# routines and does not start a background worker).
+# v0.4.0 adds hls_live(): a committing procedure for continuously ingesting a
+# stable live-stream URL while completed segments remain visible to other
+# sessions. The digest is for the PG18/trixie/amd64 release asset above.
+ARG PG_FFMPEG_SHA256=a4ea9476132311b0c4a9afda8d0feeb9865edf76cd7e47e1fc0177675134c486
 
 RUN set -eux; \
     apt-get update; \

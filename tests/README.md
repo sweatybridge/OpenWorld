@@ -40,6 +40,7 @@ any assertion fails; add `--build` to rebuild after editing the SQL.
 | `30_messages.sql` | users SELECT chat-wide (no writes); agents own-agent SELECT/INSERT/UPDATE; service ALL; dashboard read-all |
 | `40_memory.sql` | `memory` + `memory_sources`: primary own-agent; sidecar all agents; service ALL |
 | `50_config.sql` | users non-secret own; agents own incl. secrets; service non-secret only via `config_public`; dashboard read-all |
+| `58_camera_ingest.sql` | optional per-agent camera workflow surface, caller isolation, validation, and live-media mutation grants |
 | `80_users.sql` | users own-row; primary SELECT all + INSERT/UPDATE; sidecar SELECT all; service ALL; dashboard read-all |
 
 ## Access-matrix notes (suite ↔ docs in sync)

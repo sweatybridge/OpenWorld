@@ -77,6 +77,28 @@ SELECT ow.set_config(slug, 'exa_api_key', to_jsonb(NULLIF(:'exa_api_key', '')), 
 FROM (VALUES ('primary'), ('sidecar')) AS t(slug)
 WHERE NULLIF(:'exa_api_key', '') IS NOT NULL;
 
+-- The environment-backed camera feed belongs to the primary agent, so submit
+-- its workflow as that agent role. Other agents can start their own camera loop
+-- by calling the same function as their corresponding ow_agent_<slug> role.
+SET LOCAL ROLE ow_agent_primary;
+
+SELECT ow.ensure_camera_ingest_loop(
+  p_agent_slug => 'primary',
+  p_url => NULLIF(:'camera_feed_url', ''),
+  p_segment_duration => COALESCE(NULLIF(:'camera_segment_duration', ''), '2')::integer,
+  p_stall_timeout => COALESCE(NULLIF(:'camera_stall_timeout', ''), '10')::double precision,
+  p_retention_segments => COALESCE(NULLIF(:'camera_retention_segments', ''), '300')::integer
+)
+WHERE NULLIF(:'camera_feed_url', '') IS NOT NULL;
+
+-- Rerunning agent-init after unsetting the URL reconciles an existing camera
+-- workflow by requesting a graceful hls_live stop. Keep the stored URL long
+-- enough for the running procedure and retention branch to share its key.
+SELECT ow.stop_camera_ingest_loop('primary')
+WHERE NULLIF(:'camera_feed_url', '') IS NULL;
+
+RESET ROLE;
+
 SELECT ow.ensure_agent_cron_loop(
   p_agent_slug => 'sidecar',
   p_name => 'primary-review',
