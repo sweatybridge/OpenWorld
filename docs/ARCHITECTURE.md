@@ -18,7 +18,9 @@ parallel branch prunes the playlist to the configured retention bound. The
 workflow is absent when the URL is unset. The same security-invoker helpers
 support a camera loop for either agent, but require the caller's
 `ow_agent_<slug>` role to match the requested slug; each retention branch can
-therefore resolve only its owner's configured stream.
+therefore resolve only its owner's configured stream. Row-level policies on
+the pg_ffmpeg playlist and segment tables enforce the same ownership boundary
+for direct UPDATE and DELETE access.
 
 ## Design Philosophy
 

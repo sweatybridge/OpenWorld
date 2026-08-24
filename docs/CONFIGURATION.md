@@ -120,7 +120,7 @@ starts a one-shot durable send workflow for that message.
 
 Set `OPENWORLD_CAMERA_FEED_URL` to seed the primary agent's optional live
 camera ingest workflow. The URL must be a stable stream that FFmpeg can open,
-such as an RTSP/HTTP stream or a local SDP file URL. `pg_ffmpeg.hls_live`
+such as an RTSP/HTTP stream or a local SDP file URL. `ffmpeg.hls_live`
 keeps the source connection open and commits completed HLS segments while the
 workflow is running. A parallel retention loop keeps only the newest
 `OPENWORLD_CAMERA_RETENTION_SEGMENTS` rows (300 two-second segments is about ten
@@ -141,7 +141,8 @@ RESET ROLE;
 ```
 
 The role/slug match is enforced by the camera helpers, so an agent can resolve,
-stop, or prune only its own configured stream.
+stop, or prune only its own configured stream. A source URL may be assigned to
+only one agent at a time.
 
 Stop the active feed gracefully from `psql`:
 

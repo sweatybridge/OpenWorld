@@ -110,10 +110,10 @@ export interface IndexRow {
 }
 
 // One ffmpeg.hls_playlists row, aggregated against ffmpeg.hls_segments. The
-// API intentionally omits pg_ffmpeg 0.4's live source/owner/heartbeat fields;
-// segment_count / total_duration / total_size are derived. bigint values (id,
-// segment_count, total_size) arrive as strings; target_duration (int) and
-// total_duration (float8 seconds) arrive as numbers.
+// playlist table itself holds only id + target_duration; segment_count /
+// total_duration / total_size are derived. bigint values (id, segment_count,
+// total_size) arrive as strings; target_duration (int) and total_duration
+// (float8 seconds) arrive as numbers.
 export interface MediaRow {
   id: string;
   target_duration: number;

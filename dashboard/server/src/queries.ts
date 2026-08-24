@@ -311,10 +311,9 @@ export async function listIndexes(): Promise<IndexRow[]> {
 // Media (ffmpeg.hls_playlists)
 // ---------------------------------------------------------------------------
 
-// The media page returns the common playlist fields; pg_ffmpeg 0.4's live-only
-// source/owner/heartbeat state remains internal. Segment count, total duration,
-// and total byte size are aggregated from ffmpeg.hls_segments. octet_length
-// gives logical (uncompressed) bytes — the
+// ffmpeg.hls_playlists stores only id + target_duration; the interesting shape
+// (segment count, total duration, total byte size) is aggregated from
+// ffmpeg.hls_segments. octet_length gives logical (uncompressed) bytes — the
 // meaningful media size — at the cost of detoasting each segment's data, which
 // is acceptable for a read-only admin page capped at 500 rows. LEFT JOIN so a
 // playlist whose hls() call produced no segments still lists (with zeroes).

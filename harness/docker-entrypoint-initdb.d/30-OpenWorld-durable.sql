@@ -466,6 +466,37 @@ $$;
 -- hls_live_stop completes the CALL and cancels the pruning branch.
 -- ============================================================================
 
+-- source_url is pg_ffmpeg's stream identity. Keep it exclusive to one agent so
+-- changing an agent's own config cannot be used to claim another agent's live
+-- playlist through the ffmpeg RLS policies below.
+CREATE UNIQUE INDEX IF NOT EXISTS config_camera_feed_url_unique
+  ON ow.config ((value #>> '{}'))
+  WHERE key = 'camera_feed_url';
+
+-- RLS policies on the extension-owned ffmpeg tables call this SECURITY DEFINER
+-- predicate so they can resolve role ownership without depending on the
+-- transaction-local agent GUC (hls_live commits between segments). It returns
+-- only a boolean; the configured secret URL is never exposed by this helper.
+CREATE OR REPLACE FUNCTION ow._camera_role_owns_url(
+  p_role text,
+  p_url text
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ow, public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM ow.agents a
+      JOIN ow.config c ON c.agent_id = a.id
+     WHERE p_role = 'ow_agent_' || a.slug
+       AND c.key = 'camera_feed_url'
+       AND c.value #>> '{}' = p_url
+  );
+$$;
+
 -- Bind camera operations to the calling agent role. Besides protecting each
 -- agent's secret URL, this ensures a retention loop can only resolve and prune
 -- the stream configured by the agent that submitted it.
@@ -549,8 +580,8 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION ow.ensure_camera_ingest_loop(
-  p_agent_slug text DEFAULT 'primary',
-  p_url text DEFAULT NULL,
+  p_agent_slug text,
+  p_url text,
   p_segment_duration integer DEFAULT 2,
   p_stall_timeout double precision DEFAULT 10.0,
   p_retention_segments integer DEFAULT 300
