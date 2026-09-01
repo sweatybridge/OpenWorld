@@ -69,7 +69,7 @@ SELECT is((ow_tools._sdcpp_finalize_video('primary',
   'generation_failed',
   'finalize surfaces the sdcpp error code');
 
--- _sdcpp_finalize_video: the completed branch queues an outbound video. Runs in
+-- _sdcpp_finalize_video: the completed branch queues an outbound attachment. Runs in
 -- the BEGIN/ROLLBACK so the queued system message is discarded. queue_outbound_
 -- attachment is SECURITY DEFINER under agent-scoped RLS. Clear the agent GUC to
 -- model the polling node's fresh transaction and prove finalize binds it itself.
@@ -78,7 +78,14 @@ SELECT is((ow_tools._sdcpp_finalize_video('primary',
   '{"ok":true,"body":"{\"status\":\"completed\",\"result\":{\"b64_json\":\"AAAA\",\"mime_type\":\"video/webm\",\"output_format\":\"webm\",\"fps\":16,\"frame_count\":33}}"}'::jsonb,
   p_caption => 'a clip')::jsonb)->>'queued',
   'true',
-  'finalize on a completed job queues the video (queued=true)');
+  'finalize on a completed job queues the attachment (queued=true)');
+SELECT is((
+  SELECT payload #>> '{attachment,kind}'
+  FROM ow.messages
+  WHERE agent_id = 1 AND role = 'system'
+  ORDER BY id DESC LIMIT 1),
+  'document',
+  'WebM is queued as a document instead of unsupported sendVideo');
 SELECT is((ow_tools._sdcpp_finalize_video('primary',
   '{"ok":true,"body":"{\"status\":\"completed\",\"result\":{\"b64_json\":\"AAAA\",\"mime_type\":\"video/webm\",\"output_format\":\"webm\",\"fps\":16,\"frame_count\":33}}"}'::jsonb,
   p_caption => 'a clip')::jsonb)->>'output_format',
@@ -88,6 +95,13 @@ SELECT is((ow_tools._sdcpp_finalize_video('primary',
   '{"ok":true,"body":"{\"status\":\"completed\",\"result\":{\"b64_json\":\"AAAA\",\"mime_type\":\"image/webp\",\"output_format\":\"webp\",\"fps\":8,\"frame_count\":9}}"}'::jsonb)::jsonb)->>'mime_type',
   'image/webp',
   'finalize result echoes the container mime_type (webp)');
+SELECT is((
+  SELECT payload #>> '{attachment,kind}'
+  FROM ow.messages
+  WHERE agent_id = 1 AND role = 'system'
+  ORDER BY id DESC LIMIT 1),
+  'document',
+  'WebP is queued through the format-agnostic document method');
 
 -- _tool_generate_video: error returns + graph build. The build reads agent
 -- config under RLS+GUC; we run as the superuser test session (BYPASSRLS) and
@@ -118,8 +132,11 @@ SELECT matches(ow_tools._tool_generate_video(p_prompt => 'a cat walking'),
   'df\.break', 'built graph breaks the poll loop on a terminal job');
 SELECT matches(ow_tools._tool_generate_video(p_prompt => 'a cat walking'),
   '_sdcpp_finalize_video', 'built graph finalizes via _sdcpp_finalize_video');
-SELECT matches(ow_tools._tool_generate_video(p_prompt => 'a cat walking'),
-  'CZ1', 'built graph bakes the latest user chat_id (fixture CZ1) as a literal');
+SELECT matches(ow_tools.tool_call_future(
+    'GENERATE_VIDEO', '{"prompt":"a cat walking"}'::jsonb,
+    'ow_agent_primary', 1, 'primary', p_chat_id => 'origin-chat'),
+  'origin-chat',
+  'tool future bakes the originating chat_id instead of global message recency');
 -- the prompt makes it into the request body node as a quoted literal.
 SELECT matches(ow_tools._tool_generate_video(p_prompt => 'a cat walking'),
   'a cat walking', 'built graph bakes the prompt into the request body');

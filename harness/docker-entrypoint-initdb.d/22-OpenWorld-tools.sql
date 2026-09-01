@@ -887,7 +887,7 @@ COMMENT ON FUNCTION ow_tools._tool_webfetch(text, integer) IS 'Fetch an HTTP or 
 --     sdcpp_api_base  e.g. http://localhost:8080   (REQUIRED)
 --     sdcpp_api_key   optional Bearer token
 --   The graph submits the job, polls until terminal in a df.loop with df.sleep,
---   then queues the returned base64 container as an outbound Telegram video
+--   then queues the returned base64 container as a Telegram-compatible
 --   attachment via queue_outbound_attachment — so the video bytes never enter
 --   the model context, only a small JSON summary does. When this tool is
 --   present in a turn, start_tool_calls raises await_tool_calls' per-turn
@@ -927,13 +927,15 @@ END;
 $$;
 
 -- Terminal-job handler for the polling loop. On a completed job, decode the
--- returned base64 container and queue it as an outbound Telegram video
--- attachment (queue_outbound_attachment, SECURITY DEFINER owner ow_agent_primary,
--- self-resolves chat_id when NULL). On failed / cancelled / missing bytes it
--- returns an error summary WITHOUT raising, so the turn continues and the model
--- sees what went wrong. p_chat_id is resolved at graph-build time (the latest
--- user message's chat) and baked into the node. The polling node runs in a
--- fresh transaction, so the completed path rebinds agent context before queueing.
+-- returned base64 container and queue it as a Telegram-compatible attachment
+-- (queue_outbound_attachment, SECURITY DEFINER owner ow_agent_primary,
+-- self-resolves chat_id when NULL). Telegram sendVideo accepts MPEG-4, so the
+-- current sdcpp outputs (WebM/WebP/AVI) use sendDocument instead. On failed /
+-- cancelled / missing bytes it returns an error summary WITHOUT raising, so the
+-- turn continues and the model sees what went wrong. p_chat_id is captured from
+-- the originating tool-call context at graph-build time and baked into the node.
+-- The polling node runs in a fresh transaction, so the completed path rebinds
+-- agent context before queueing.
 CREATE OR REPLACE FUNCTION ow_tools._sdcpp_finalize_video(
   p_agent_slug text,
   p_envelope jsonb,
@@ -953,6 +955,7 @@ DECLARE
   v_fmt text;
   v_ext text;
   v_filename text;
+  v_kind text;
 BEGIN
   IF v_status <> 'completed' THEN
     RETURN jsonb_build_object(
@@ -977,15 +980,16 @@ BEGIN
   v_mime := coalesce(v_result->>'mime_type', CASE v_fmt WHEN 'webp' THEN 'image/webp' WHEN 'avi' THEN 'video/x-msvideo' ELSE 'video/webm' END);
   v_ext  := CASE v_fmt WHEN 'webp' THEN 'webp' WHEN 'avi' THEN 'avi' ELSE 'webm' END;
   v_filename := coalesce(nullif(p_filename, ''), 'generated_video.' || v_ext);
+  v_kind := CASE WHEN lower(v_mime) = 'video/mp4' THEN 'video' ELSE 'document' END;
 
   PERFORM set_config('ow.current_agent_id', ow.agent_id(p_agent_slug)::text, true);
   PERFORM ow.queue_outbound_attachment(
-    p_agent_slug, v_b64, 'video', v_filename,
+    p_agent_slug, v_b64, v_kind, v_filename,
     nullif(p_caption, ''), v_mime, nullif(p_chat_id, ''));
 
   RETURN jsonb_build_object(
     'queued', true,
-    'delivered', 'video',
+    'delivered', v_kind,
     'status', 'completed',
     'frame_count', nullif(v_result->>'frame_count', '')::integer,
     'fps', nullif(v_result->>'fps', '')::integer,
@@ -1011,12 +1015,13 @@ BEGIN
 END;
 $$;
 
--- GENERATE_VIDEO graph builder. Reads sdcpp config at BUILD time (the agent GUC
--- is bound by start_tool_calls) and bakes endpoint, headers, slug, chat_id and
--- the vid_gen request body into the graph text as literals — no graph node does
--- an agent-scoped config read. Introspected as the LLM-facing GENERATE_VIDEO
--- schema. Returns a df graph text (like SEARCH/WEBFETCH), or a single-node error
--- result text when sdcpp_api_base is unset.
+-- GENERATE_VIDEO graph builder. Reads sdcpp config and the originating chat
+-- context at BUILD time (the GUCs are bound by start_tool_calls/tool_call_future)
+-- and bakes endpoint, headers, slug, chat_id and the vid_gen request body into
+-- the graph text as literals — no graph node does an agent-scoped config read.
+-- Introspected as the LLM-facing GENERATE_VIDEO schema. Returns a df graph text
+-- (like SEARCH/WEBFETCH), or a single-node error result text when
+-- sdcpp_api_base is unset.
 CREATE OR REPLACE FUNCTION ow_tools._tool_generate_video(
   p_prompt text,
   p_negative_prompt text DEFAULT '',
@@ -1042,7 +1047,7 @@ DECLARE
   v_slug text;
   v_base text;
   v_key text;
-  v_chat_id text;
+  v_chat_id text := nullif(current_setting('ow.current_chat_id', true), '');
   v_headers jsonb;
   v_headers_text text;
   v_body jsonb;
@@ -1064,10 +1069,6 @@ BEGIN
   END IF;
 
   SELECT slug INTO v_slug FROM ow.agents WHERE id = v_agent_id;
-  SELECT m.chat_id INTO v_chat_id
-    FROM ow.messages m
-    WHERE m.agent_id = v_agent_id AND m.role = 'user'
-    ORDER BY m.id DESC LIMIT 1;
 
   v_key := ow._config_text(v_agent_id, 'sdcpp_api_key');
   v_headers := jsonb_build_object('Content-Type', 'application/json', 'Accept', 'application/json');
@@ -1119,7 +1120,7 @@ BEGIN
   );
 END;
 $$;
-COMMENT ON FUNCTION ow_tools._tool_generate_video(text, text, integer, integer, double precision, integer, integer, integer, text, text, text, text, text) IS 'Generate a short video clip via the stable-diffusion.cpp sdcpp API and send it as a Telegram video. Parameters: prompt (required), negative_prompt, width, height, strength, seed (-1 random), video_frames (effective length is normalized to the largest 4n+1 <= requested), fps, output_format (webm|webp|avi; default webm), init_image / end_image (base64 or data: URL for image-to-video; omit for text-to-video), caption, filename. The clip is produced server-side and queued for delivery — only a small summary returns. Requires agent sdcpp_api_base config.';
+COMMENT ON FUNCTION ow_tools._tool_generate_video(text, text, integer, integer, double precision, integer, integer, integer, text, text, text, text, text) IS 'Generate a short video clip via the stable-diffusion.cpp sdcpp API and send it as a Telegram attachment. Parameters: prompt (required), negative_prompt, width, height, strength, seed (-1 random), video_frames (effective length is normalized to the largest 4n+1 <= requested), fps, output_format (webm|webp|avi; default webm), init_image / end_image (base64 or data: URL for image-to-video; omit for text-to-video), caption, filename. WebM/WebP/AVI use sendDocument because Telegram sendVideo requires MPEG-4. The clip is produced server-side and queued for delivery — only a small summary returns. Requires agent sdcpp_api_base config.';
 
 -- Run one synchronous tool's WORK under the acting role (SET ROLE + GUCs), then
 -- RESET. SECURITY INVOKER — SET ROLE is forbidden inside SECURITY DEFINER. The
@@ -1238,7 +1239,9 @@ BEGIN
     );
   ELSIF p_name = 'GENERATE_VIDEO' THEN
     -- Numeric field safe-parse mirrors SEARCH/WEBFETCH: a malformed value falls
-    -- back to the function default rather than aborting the whole turn.
+    -- back to the function default rather than aborting the whole turn. Bind the
+    -- originating chat so the graph cannot drift to another concurrent chat.
+    PERFORM set_config('ow.current_chat_id', coalesce(p_chat_id, ''), true);
     RETURN ow_tools._tool_generate_video(
       coalesce(p_args->>'prompt', ''),
       coalesce(p_args->>'negative_prompt', ''),
