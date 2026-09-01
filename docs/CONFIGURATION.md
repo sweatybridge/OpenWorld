@@ -144,7 +144,7 @@ The role/slug match is enforced by the camera helpers, so an agent can resolve,
 stop, or prune only its own configured stream. A source URL may be assigned to
 only one agent at a time.
 
-Stop the active feed gracefully from `psql`:
+Stop the active feed from `psql`:
 
 ```sql
 SET ROLE ow_agent_primary;
@@ -160,7 +160,8 @@ docker compose run --rm agent-init
 ```
 
 To disable ingest, clear `OPENWORLD_CAMERA_FEED_URL` and rerun the same seed
-command; it requests the same graceful stop automatically.
+command. It requests an `hls_live` stop and cancels the durable camera instance,
+including one that is still pending or retrying.
 
 ## Dashboard
 

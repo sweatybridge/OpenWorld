@@ -224,16 +224,40 @@ SELECT throws_ok(
   'camera loop rejects non-positive segment duration before starting work'
 );
 SELECT throws_ok(
+  $$SELECT ow.ensure_camera_ingest_loop('primary', 'rtsp://camera/live', NULL, 10, 300)$$,
+  'P0001',
+  'camera segment_duration must be greater than 0',
+  'camera loop rejects a NULL segment duration before starting work'
+);
+SELECT throws_ok(
   $$SELECT ow.ensure_camera_ingest_loop('primary', 'rtsp://camera/live', 2, 0, 300)$$,
   'P0001',
   'camera stall_timeout must be finite and greater than 0',
   'camera loop rejects non-positive stall timeout before starting work'
 );
 SELECT throws_ok(
+  $$SELECT ow.ensure_camera_ingest_loop('primary', 'rtsp://camera/live', 2, NULL, 300)$$,
+  'P0001',
+  'camera stall_timeout must be finite and greater than 0',
+  'camera loop rejects a NULL stall timeout before starting work'
+);
+SELECT throws_ok(
+  $$SELECT ow.ensure_camera_ingest_loop('primary', 'rtsp://camera/live', 2, 10, NULL)$$,
+  'P0001',
+  'camera retention_segments must be greater than 0',
+  'camera loop rejects a NULL retention bound before starting work'
+);
+SELECT throws_ok(
   $$SELECT ow.prune_camera_feed('primary', 0)$$,
   'P0001',
   'camera retention_segments must be greater than 0',
   'camera pruning rejects a non-positive retention bound'
+);
+SELECT throws_ok(
+  $$SELECT ow.prune_camera_feed('primary', NULL)$$,
+  'P0001',
+  'camera retention_segments must be greater than 0',
+  'camera pruning rejects a NULL retention bound'
 );
 
 RESET ROLE;
@@ -250,6 +274,36 @@ SELECT throws_ok(
   'P0001',
   'camera ingest for agent primary must run as role ow_agent_primary',
   'an agent cannot prune another agent''s configured stream'
+);
+
+RESET ROLE;
+
+-- A durable camera workflow may be active before hls_live has created its
+-- playlist row. Stopping by playlist flag alone cannot disable that workflow;
+-- the helper must cancel the durable instance identified by its camera label.
+DELETE FROM ffmpeg.hls_segments
+ WHERE playlist_id = (
+   SELECT id FROM ffmpeg.hls_playlists
+    WHERE source_url = 'rtsp://camera/primary'
+ );
+DELETE FROM ffmpeg.hls_playlists
+ WHERE source_url = 'rtsp://camera/primary';
+
+SET LOCAL ROLE ow_agent_primary;
+SELECT df.start(
+  df.sleep(600),
+  'ow:primary:camera',
+  transaction_mode => 'new'
+) AS pending_camera_instance_id \gset
+
+SELECT ok(
+  ow.stop_camera_ingest_loop('primary'),
+  'camera stop reports success when it cancels an instance without a playlist'
+);
+SELECT is(
+  df.status(:'pending_camera_instance_id'),
+  'cancelled',
+  'camera stop cancels the pending or retrying durable instance'
 );
 
 RESET ROLE;

@@ -92,8 +92,9 @@ SELECT ow.ensure_camera_ingest_loop(
 WHERE NULLIF(:'camera_feed_url', '') IS NOT NULL;
 
 -- Rerunning agent-init after unsetting the URL reconciles an existing camera
--- workflow by requesting a graceful hls_live stop. Keep the stored URL long
--- enough for the running procedure and retention branch to share its key.
+-- workflow by requesting an hls_live stop and cancelling its durable instance.
+-- Keep the stored URL long enough for the running procedure and retention
+-- branch to share its key.
 SELECT ow.stop_camera_ingest_loop('primary')
 WHERE NULLIF(:'camera_feed_url', '') IS NULL;
 

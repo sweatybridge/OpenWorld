@@ -556,7 +556,7 @@ DECLARE
   v_url text;
   v_deleted integer;
 BEGIN
-  IF p_retention_segments <= 0 THEN
+  IF p_retention_segments IS NULL OR p_retention_segments <= 0 THEN
     RAISE EXCEPTION 'camera retention_segments must be greater than 0';
   END IF;
 
@@ -604,16 +604,21 @@ BEGIN
   IF p_url IS NULL OR btrim(p_url) = '' THEN
     RAISE EXCEPTION 'camera feed URL must not be empty';
   END IF;
-  IF p_segment_duration <= 0 THEN
+  IF p_segment_duration IS NULL OR p_segment_duration <= 0 THEN
     RAISE EXCEPTION 'camera segment_duration must be greater than 0';
   END IF;
-  IF p_stall_timeout::text IN ('NaN', 'Infinity', '-Infinity')
+  IF p_stall_timeout IS NULL
+     OR p_stall_timeout::text IN ('NaN', 'Infinity', '-Infinity')
      OR p_stall_timeout <= 0 THEN
     RAISE EXCEPTION 'camera stall_timeout must be finite and greater than 0';
   END IF;
-  IF p_retention_segments <= 0 THEN
+  IF p_retention_segments IS NULL OR p_retention_segments <= 0 THEN
     RAISE EXCEPTION 'camera retention_segments must be greater than 0';
   END IF;
+
+  -- Serialize start/stop for this agent. If disablement races with a start,
+  -- stop waits until df.start has recorded the instance and then cancels it.
+  PERFORM pg_advisory_xact_lock(hashtextextended(v_label, 0));
 
   SELECT id INTO v_existing
     FROM df.instances
@@ -667,14 +672,40 @@ SET search_path = ow, ffmpeg, public, pg_temp
 AS $$
 DECLARE
   v_agent_id bigint;
+  v_label text := format('ow:%s:camera', p_agent_slug);
+  v_instance_id text;
   v_url text;
+  v_stop_requested boolean := false;
+  v_cancelled boolean := false;
 BEGIN
   v_agent_id := ow._camera_agent_id(p_agent_slug);
+  PERFORM pg_advisory_xact_lock(hashtextextended(v_label, 0));
+
   v_url := ow._config_text(v_agent_id, 'camera_feed_url');
-  IF v_url IS NULL OR btrim(v_url) = '' THEN
-    RETURN false;
+  IF v_url IS NOT NULL
+     AND btrim(v_url) <> ''
+     AND EXISTS (
+       SELECT 1
+         FROM ffmpeg.hls_playlists
+        WHERE source_url = v_url
+     ) THEN
+    v_stop_requested := ffmpeg.hls_live_stop(v_url);
   END IF;
-  RETURN ffmpeg.hls_live_stop(v_url);
+
+  -- The playlist row does not exist until hls_live claims the source, and a
+  -- retry resets its stop flag. Cancel the owning durable workflow as the
+  -- persistent stop signal so pending/retrying ingest cannot start later.
+  FOR v_instance_id IN
+    SELECT id
+      FROM df.instances
+     WHERE label = v_label
+       AND status IN ('pending', 'running')
+  LOOP
+    PERFORM df.cancel(v_instance_id, 'camera ingest stopped');
+    v_cancelled := true;
+  END LOOP;
+
+  RETURN v_stop_requested OR v_cancelled;
 END;
 $$;
 
