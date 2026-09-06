@@ -15,6 +15,7 @@ BEGIN
     WHEN 'add' THEN s:=jsonb_set(s,'{count}',to_jsonb((s->>'count')::integer+(i.payload->>'value')::integer));
     WHEN 'observe' THEN s:=s||jsonb_build_object('observation',i.payload);
     WHEN 'who' THEN s:=s||jsonb_build_object('effective_owner',current_user);
+    WHEN 'lifecycle.resume' THEN s:=s||jsonb_build_object('resume_generation',c.generation);
     WHEN 'timer.fired' THEN s:=jsonb_set(s,'{count}',to_jsonb((s->>'count')::integer+100));
     WHEN 'effect.succeeded' THEN s:=jsonb_set(s,'{count}',to_jsonb((s->>'count')::integer+10));
     WHEN 'fail' THEN RAISE EXCEPTION 'fixture reducer failure';

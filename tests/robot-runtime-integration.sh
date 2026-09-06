@@ -15,8 +15,8 @@ expect() {
   printf 'PASS: %s\n' "$3"
 }
 await_value() {
-  local i
-  for i in $(seq 1 150); do
+  local _attempt
+  for _attempt in $(seq 1 150); do
     if [[ $(sql "$2") == "$1" ]]; then printf 'PASS: %s\n' "$3"; return; fi
     sleep 0.4
   done
@@ -36,14 +36,14 @@ run)
   await_value active "SELECT lifecycle FROM robot_runtime.activity_instance WHERE id='$aid'" 'pg_durable activates committed activity'
 
   pids=()
-  for i in $(seq 1 8); do
+  for _ in $(seq 1 8); do
     sql "SET ROLE rr_owner; SELECT robot_runtime.send(ROW('$aid',1)::robot_runtime.activity_ref,'add','{\"value\":1}');" >/dev/null &
     pids+=("$!")
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
   await_value 8 "SELECT state->>'count' FROM robot_runtime.activity_instance WHERE id='$aid'" 'concurrent senders serialize into one revision chain'
   pids=()
-  for i in $(seq 1 8); do
+  for _ in $(seq 1 8); do
     sql "SET ROLE rr_owner; SELECT robot_runtime.send(ROW('$aid',1)::robot_runtime.activity_ref,'add','{\"value\":1}','11111111-0000-0000-0000-000000000001');" >/dev/null &
     pids+=("$!")
   done

@@ -11,8 +11,11 @@ existing workflows.
 ## Installation and operation
 
 Fresh `docker compose up --build` databases install the runtime automatically.
+The `runtime-init` service then starts the supervisor and exits; it retries if
+`pg_durable` is not ready yet. Schema initialization itself does not start workflows.
 For an existing database, back it up, apply the five new SQL files in filename
-order as the database administrator, and check `robot_runtime.worker_health`.
+order as the database administrator, call `robot_runtime.ensure_scheduler()`,
+and check `robot_runtime.worker_health`.
 These are the initial schema migration, not scripts to rerun on an installed
 runtime. PostgreSQL 18 and this repo's pinned `pg_durable` release are the initial
 supported configuration.
@@ -142,7 +145,7 @@ separate bounded reserve so ordinary traffic cannot suppress completions.
 effects and prevents ordinary reduction until resume. Resume advances generation
 and effect epoch; prior-generation pending messages become stale. Stop and fault
 barriers invalidate queued/claimed effects when the barrier is accepted, before
-its reducer runs. A stop reducer reaches `stopped`; a fault reducer reaches
+its reducer runs. Lifecycle barriers cannot have an expiry. A stop reducer reaches `stopped`; a fault reducer reaches
 `faulted`. They may emit only respectively scoped `stop`/`fault` effects with an
 explicit deadline within five seconds of acceptance. No previous activity is
 implicitly resumed.
@@ -254,4 +257,5 @@ actual `pg_durable` scheduler. Run against disposable databases only:
 
 ```bash
 docker compose -f docker-compose.test.yml run --rm -T pgtap
+bash tests/robot-runtime-e2e.sh
 ```

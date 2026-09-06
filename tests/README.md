@@ -1,5 +1,19 @@
 # pgTAP permission-matrix tests
 
+The suite also covers the SQL activity runtime in `95_robot_runtime.sql`.
+After pgTAP passes on a fresh disposable database, run the committed worker,
+concurrency, adapter, timeout, restart, and logical-restore checks:
+
+```bash
+docker compose -f docker-compose.test.yml run --rm -T pgtap
+bash tests/robot-runtime-e2e.sh
+```
+
+The second command restarts only the `test-db` service and creates a separate
+`rr_restore` database. It provisions committed `rr_test` fixtures, so use a fresh
+Compose test project for each complete run. CI runs both commands. It does not
+connect to the application's `harness` service.
+
 `tests/pgtap/` is a [pgTAP](https://pgtap.org) suite that pins down the entire
 **RBAC + Row-Level-Security permission matrix** enforced by
 `docker-entrypoint-initdb.d/40-OpenWorld-rbac.sql` and

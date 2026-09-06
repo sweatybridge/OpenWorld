@@ -141,6 +141,7 @@ BEGIN
     RETURN jsonb_build_object('intent_id',i.id,'message_id',i.message_id,'status',i.status,'duplicate',true);
   END IF;
   IF p_kind IN ('lifecycle.start','lifecycle.pause','lifecycle.resume','lifecycle.stop','lifecycle.fault') THEN
+    IF p_expires IS NOT NULL THEN RAISE EXCEPTION 'lifecycle barriers cannot expire'; END IF;
     policy := 'barrier'; pri := CASE p_kind WHEN 'lifecycle.fault' THEN 1003 WHEN 'lifecycle.stop' THEN 1002 ELSE 1001 END;
   ELSIF internal THEN pri := 500;
   ELSE

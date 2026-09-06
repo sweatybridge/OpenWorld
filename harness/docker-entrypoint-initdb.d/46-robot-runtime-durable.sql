@@ -137,5 +137,6 @@ GRANT robot_runtime_operator TO ow_agent_primary,ow_agent_sidecar;
 -- Dashboard has BYPASSRLS already; observer grants intentionally permit its
 -- existing administrator to inspect all runtime state without mutation rights.
 GRANT robot_runtime_observer TO ow_dashboard;
-SELECT robot_runtime.ensure_scheduler();
+-- pg_durable may not be initialized during Docker's temporary init server.
+-- The runtime-init service starts the supervisor after normal server startup.
 COMMIT;

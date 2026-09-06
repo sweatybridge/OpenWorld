@@ -60,6 +60,7 @@ SELECT is((SELECT state#>>'{observation,value}' FROM robot_runtime.activity_inst
 SET LOCAL ROLE rr_owner;
 SELECT robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'add','{"value":1}');
 SELECT is(robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'busy')->>'status','rejected','reject_if_busy returns durable rejection');
+SELECT throws_ok(format('SELECT robot_runtime.send(ROW(%L,1)::robot_runtime.activity_ref,''lifecycle.pause'',''{}'',NULL,NULL,clock_timestamp()+interval ''1 second'')',:'aid'),'P0001','lifecycle barriers cannot expire','expiring barriers cannot strand an activity');
 SELECT robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'add','{"value":1}');
 SELECT robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'add','{"value":1}');
 SELECT robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'add','{"value":1}');
@@ -73,6 +74,7 @@ SELECT robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'lifecycle.r
 RESET ROLE;
 SELECT robot_runtime.process_one();
 SELECT is((SELECT generation FROM robot_runtime.activity_instance WHERE id=:'aid'),2::bigint,'resume advances generation');
+SELECT is((SELECT state->>'resume_generation' FROM robot_runtime.activity_instance WHERE id=:'aid'),'2','resume reducer context describes new generation');
 SET LOCAL ROLE rr_owner;
 SELECT is(robot_runtime.send(ROW(:'aid',1)::robot_runtime.activity_ref,'add','{"value":99}')->>'status','stale','obsolete generation cannot alter state');
 SELECT robot_runtime.send(ROW(:'aid',2)::robot_runtime.activity_ref,'emit',jsonb_build_object('effects',jsonb_build_array(rr_test.effect())));

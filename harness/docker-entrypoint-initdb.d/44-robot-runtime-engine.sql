@@ -189,7 +189,8 @@ BEGIN
     SELECT ns.nspname,p.proname INTO n,f FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace WHERE p.oid=reducer_oid;
     EXECUTE format('SELECT r.* FROM %I.%I($1,$2,$3) r',n,f) INTO tr USING a.state,
       ROW(i.id,i.kind,1,i.payload,i.source,i.message_id,i.observed_at,i.expires_at)::robot_runtime.intent,
-      ROW(a.id,a.generation,a.effect_epoch,a.revision+1,i.accepted_at)::robot_runtime.reduce_context;
+      ROW(a.id,a.generation+CASE WHEN i.kind='lifecycle.resume' THEN 1 ELSE 0 END,
+        a.effect_epoch+CASE WHEN i.kind='lifecycle.resume' THEN 1 ELSE 0 END,a.revision+1,i.accepted_at)::robot_runtime.reduce_context;
     PERFORM robot_runtime._apply(a,i,tr);
   EXCEPTION WHEN query_canceled THEN PERFORM robot_runtime._fault(a.id,i.id,'57014');
     WHEN OTHERS THEN PERFORM robot_runtime._fault(a.id,i.id,SQLSTATE);
