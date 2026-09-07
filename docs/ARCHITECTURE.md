@@ -11,6 +11,17 @@ There is no filesystem loop and no external agent process. Everything is
 PL/pgSQL functions, `pg_durable` workflows, and triggers running inside
 Postgres. The only other container is the one-shot `agent-init` seed job.
 
+When `OPENWORLD_CAMERA_FEED_URL` is configured, the seed job starts an
+`ow:primary:camera` durable workflow as the primary agent. One branch runs the
+top-level `ffmpeg.hls_live` procedure and commits segments continuously; a
+parallel branch prunes the playlist to the configured retention bound. The
+workflow is absent when the URL is unset. The same security-invoker helpers
+support a camera loop for either agent, but require the caller's
+`ow_agent_<slug>` role to match the requested slug; each retention branch can
+therefore resolve only its owner's configured stream. Row-level policies on
+the pg_ffmpeg playlist and segment tables enforce the same ownership boundary
+for direct UPDATE and DELETE access.
+
 ## Design Philosophy
 
 - Any tools that affect external environments are subject to access control via role grants.

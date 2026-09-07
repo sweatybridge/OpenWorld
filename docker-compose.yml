@@ -50,6 +50,10 @@ services:
       - --set=telegram_thread_id=${OPENWORLD_TELEGRAM_THREAD_ID:-}
       - --set=telegram_api_base=${OPENWORLD_TELEGRAM_API_BASE:-https://api.telegram.org}
       - --set=telegram_poll_timeout=${OPENWORLD_TELEGRAM_POLL_TIMEOUT:-60}
+      - --set=camera_feed_url=${OPENWORLD_CAMERA_FEED_URL:-}
+      - --set=camera_segment_duration=${OPENWORLD_CAMERA_SEGMENT_DURATION:-2}
+      - --set=camera_stall_timeout=${OPENWORLD_CAMERA_STALL_TIMEOUT:-10}
+      - --set=camera_retention_segments=${OPENWORLD_CAMERA_RETENTION_SEGMENTS:-300}
       - --set=dashboard_db_password=${OPENWORLD_DASHBOARD_PASSWORD:-dashboard}
       - --set=ssh_host=${OPENWORLD_SSH_HOST:-sshd}
       - --set=ssh_port=${OPENWORLD_SSH_PORT:-2222}

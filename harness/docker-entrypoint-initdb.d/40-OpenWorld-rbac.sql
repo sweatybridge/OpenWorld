@@ -324,15 +324,86 @@ GRANT SELECT ON ALL TABLES IN SCHEMA ffmpeg
 -- send_audio key off. ffmpeg.hls is SECURITY INVOKER and INSERTs into
 -- ffmpeg.hls_playlists / ffmpeg.hls_segments (and nextval's their id
 -- sequences), so those roles need INSERT on the two tables and USAGE on the
--- sequences. The tables are scratch media storage (no RLS, no sensitive
--- data); GRANT ... ON ALL TABLES above only granted SELECT, so this is
--- scoped to just the hls pair.
+-- sequences. The tables are scratch media storage; GRANT ... ON ALL TABLES
+-- above only granted SELECT, so this is scoped to just the hls pair. RLS below
+-- preserves those common read/insert paths while constraining live mutations.
 GRANT INSERT ON ffmpeg.hls_playlists, ffmpeg.hls_segments
   TO ow_anonymous, ow_authenticated, ow_service,
      ow_agent_primary, ow_agent_sidecar;
 GRANT USAGE, SELECT ON SEQUENCE ffmpeg.hls_playlists_id_seq, ffmpeg.hls_segments_id_seq
   TO ow_anonymous, ow_authenticated, ow_service,
      ow_agent_primary, ow_agent_sidecar;
+
+-- Each agent may own a camera workflow. hls_live claims/releases its playlist
+-- and updates a heartbeat; its retention branch deletes old segments. The ow
+-- helpers bind each operation to the calling agent's own configured stream.
+GRANT EXECUTE ON PROCEDURE ffmpeg.hls_live(text, integer, double precision)
+  TO ow_agent_primary, ow_agent_sidecar;
+GRANT UPDATE ON ffmpeg.hls_playlists
+  TO ow_agent_primary, ow_agent_sidecar;
+GRANT DELETE ON ffmpeg.hls_segments
+  TO ow_agent_primary, ow_agent_sidecar;
+
+ALTER TABLE ffmpeg.hls_playlists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ffmpeg.hls_segments ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS hls_playlists_read ON ffmpeg.hls_playlists;
+CREATE POLICY hls_playlists_read ON ffmpeg.hls_playlists
+  FOR SELECT TO PUBLIC USING (true);
+DROP POLICY IF EXISTS hls_playlists_insert ON ffmpeg.hls_playlists;
+CREATE POLICY hls_playlists_insert ON ffmpeg.hls_playlists
+  FOR INSERT TO ow_anonymous, ow_authenticated
+  WITH CHECK (source_url IS NULL);
+DROP POLICY IF EXISTS hls_playlists_agent_insert ON ffmpeg.hls_playlists;
+CREATE POLICY hls_playlists_agent_insert ON ffmpeg.hls_playlists
+  FOR INSERT TO ow_agent_primary, ow_agent_sidecar
+  WITH CHECK (
+    source_url IS NULL
+    OR ow._camera_role_owns_url(current_user::text, source_url)
+  );
+DROP POLICY IF EXISTS hls_playlists_camera_update ON ffmpeg.hls_playlists;
+CREATE POLICY hls_playlists_camera_update ON ffmpeg.hls_playlists
+  FOR UPDATE TO ow_agent_primary, ow_agent_sidecar
+  USING (ow._camera_role_owns_url(current_user::text, source_url))
+  WITH CHECK (ow._camera_role_owns_url(current_user::text, source_url));
+
+DROP POLICY IF EXISTS hls_segments_read ON ffmpeg.hls_segments;
+CREATE POLICY hls_segments_read ON ffmpeg.hls_segments
+  FOR SELECT TO PUBLIC USING (true);
+DROP POLICY IF EXISTS hls_segments_insert ON ffmpeg.hls_segments;
+CREATE POLICY hls_segments_insert ON ffmpeg.hls_segments
+  FOR INSERT TO ow_anonymous, ow_authenticated
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM ffmpeg.hls_playlists p
+       WHERE p.id = playlist_id AND p.source_url IS NULL
+    )
+  );
+DROP POLICY IF EXISTS hls_segments_agent_insert ON ffmpeg.hls_segments;
+CREATE POLICY hls_segments_agent_insert ON ffmpeg.hls_segments
+  FOR INSERT TO ow_agent_primary, ow_agent_sidecar
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+        FROM ffmpeg.hls_playlists p
+       WHERE p.id = playlist_id
+         AND (
+           p.source_url IS NULL
+           OR ow._camera_role_owns_url(current_user::text, p.source_url)
+         )
+    )
+  );
+DROP POLICY IF EXISTS hls_segments_camera_delete ON ffmpeg.hls_segments;
+CREATE POLICY hls_segments_camera_delete ON ffmpeg.hls_segments
+  FOR DELETE TO ow_agent_primary, ow_agent_sidecar
+  USING (
+    EXISTS (
+      SELECT 1
+        FROM ffmpeg.hls_playlists p
+       WHERE p.id = playlist_id
+         AND ow._camera_role_owns_url(current_user::text, p.source_url)
+    )
+  );
 
 -- TODO: move this function to ow_tools or telegram schema
 GRANT EXECUTE ON FUNCTION ow.queue_outbound_attachment(text, text, text, text, text, text, text)
@@ -370,14 +441,15 @@ GRANT ow_service TO ow_agent_sidecar;
 
 -- SECURITY DEFINER entry-point starters, owned by the agent whose context they
 -- submit as (df.start submits as the owner): the telegram inbox loop (primary),
--- the cron loop (sidecar), and queue_outbound_attachment (primary — it is
--- called from the anonymous/authenticated acting role and needs the INSERT that
--- only the primary owner grants).
+-- the cron loop (sidecar), and queue_outbound_attachment
+-- (primary — it is called from the anonymous/authenticated acting role and
+-- needs the INSERT that only the primary owner grants).
 -- SECURITY INVOKER (they inherit the caller's identity; in every live path the
--- caller is the loop / message-inserter role ow_agent_primary, so df.start
--- still submits as primary): start_agent_loop, after_user_message_loop,
--- after_outbound_message_send, send_message, send_message_future. Ownership is
--- inert for INVOKER functions, so these are not re-owned here.
+-- caller is the relevant agent role, so df.start submits as that agent):
+-- start_agent_loop, ensure_camera_ingest_loop, stop_camera_ingest_loop,
+-- after_user_message_loop, after_outbound_message_send, send_message, and
+-- send_message_future. Ownership is inert for INVOKER functions, so these are
+-- not re-owned here.
 ALTER FUNCTION ow.ensure_telegram_inbox_loop(text, integer) OWNER TO ow_agent_primary;
 ALTER FUNCTION ow.ensure_agent_cron_loop(text, text, text, text) OWNER TO ow_agent_sidecar;
 ALTER FUNCTION ow.queue_outbound_attachment(text, text, text, text, text, text, text) OWNER TO ow_agent_primary;
