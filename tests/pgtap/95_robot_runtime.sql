@@ -212,5 +212,64 @@ SELECT is((SELECT count(*) FROM robot_runtime.activity_inbox WHERE activity_id=:
 SELECT robot_runtime.process_one();
 SELECT is((SELECT state->>'count' FROM robot_runtime.activity_instance WHERE id=:'retry_activity'),'15','retried reduction commits exactly once');
 
+-- Ownership and privilege changes do not change pg_get_functiondef.
+SET LOCAL ROLE rr_owner;
+SELECT (robot_runtime.start('counter',1)).activity_id AS transferred \gset
+RESET ROLE;
+ALTER FUNCTION rr_test.reduce(jsonb,robot_runtime.intent,robot_runtime.reduce_context) OWNER TO rr_other;
+SELECT robot_runtime.process_one();
+SELECT is((SELECT lifecycle FROM robot_runtime.activity_instance WHERE id=:'transferred'),'faulted','transferred reducer is rejected before execution');
+ALTER FUNCTION rr_test.reduce(jsonb,robot_runtime.intent,robot_runtime.reduce_context) OWNER TO rr_owner;
+SET LOCAL ROLE rr_owner;
+SELECT (robot_runtime.start('counter',1)).activity_id AS privileged \gset
+RESET ROLE;
+ALTER ROLE rr_owner BYPASSRLS;
+SELECT robot_runtime.process_one();
+SELECT is((SELECT lifecycle FROM robot_runtime.activity_instance WHERE id=:'privileged'),'faulted','BYPASSRLS promotion invalidates registered reducer');
+ALTER ROLE rr_owner NOBYPASSRLS;
+SET LOCAL ROLE rr_owner;
+SELECT (robot_runtime.start('counter',1)).activity_id AS superowner \gset
+RESET ROLE;
+ALTER ROLE rr_owner SUPERUSER;
+SELECT robot_runtime.process_one();
+SELECT is((SELECT lifecycle FROM robot_runtime.activity_instance WHERE id=:'superowner'),'faulted','superuser promotion invalidates registered reducer');
+ALTER ROLE rr_owner NOSUPERUSER;
+
+-- Repeated gateway rotation removes expired holders but retains the fence.
+SELECT robot_runtime.acquire_capability('mock','arm','rotation','old',30,'shared');
+SELECT robot_runtime.acquire_capability('mock','arm','rotation','live',30,'shared');
+SELECT fence AS rotation_fence FROM robot_runtime.capability_resource WHERE resource_key='rotation' \gset
+UPDATE robot_runtime.capability_lease SET expires_at=clock_timestamp()-interval '1 second' WHERE resource_key='rotation' AND gateway='old';
+SELECT robot_runtime.acquire_capability('mock','arm','rotation','new',30,'shared');
+SELECT is((SELECT count(*) FROM robot_runtime.capability_lease WHERE resource_key='rotation'),2::bigint,'acquisition deletes expired holders and preserves live shared holders');
+SELECT ok((SELECT fence>:rotation_fence FROM robot_runtime.capability_lease WHERE resource_key='rotation' AND gateway='new'),'pruning preserves monotonic fencing');
+SELECT ok(NOT robot_runtime.renew_capability('mock','arm','rotation','old',:rotation_fence),'pruned holder cannot renew');
+
+-- Two lower-UUID activities have blocked lanes. A batch of one must reach
+-- the third activity even though the first two still contain pending effects.
+SET LOCAL ROLE rr_owner;
+SELECT (robot_runtime.start('counter',1,'{}','starvation')).activity_id;
+SELECT (robot_runtime.start('counter',1,'{}','starvation')).activity_id;
+SELECT (robot_runtime.start('counter',1,'{}','starvation')).activity_id;
+RESET ROLE;
+SELECT robot_runtime.process_one() FROM generate_series(1,3);
+SELECT id AS blocked1 FROM robot_runtime.activity_instance WHERE label='starvation' ORDER BY id LIMIT 1 \gset
+SELECT id AS blocked2 FROM robot_runtime.activity_instance WHERE label='starvation' ORDER BY id OFFSET 1 LIMIT 1 \gset
+SELECT id AS eligible FROM robot_runtime.activity_instance WHERE label='starvation' ORDER BY id DESC LIMIT 1 \gset
+SET LOCAL ROLE rr_owner;
+SELECT robot_runtime.send(ROW(:'blocked1',1)::robot_runtime.activity_ref,'emit',jsonb_build_object('effects',jsonb_build_array(rr_test.effect(),rr_test.effect())));
+SELECT robot_runtime.send(ROW(:'blocked2',1)::robot_runtime.activity_ref,'emit',jsonb_build_object('effects',jsonb_build_array(rr_test.effect(),rr_test.effect())));
+SELECT robot_runtime.send(ROW(:'eligible',1)::robot_runtime.activity_ref,'emit',jsonb_build_object('effects',jsonb_build_array(rr_test.effect())));
+RESET ROLE;
+SELECT robot_runtime.process_one() FROM generate_series(1,3);
+SET LOCAL ROLE rr_adapter;
+SELECT robot_runtime.claim_effects('mock','arm','r1','other',:fence2,2);
+RESET ROLE;
+UPDATE robot_runtime.effect_outbox SET status='ambiguous' WHERE activity_id=:'blocked2' AND status='claimed';
+SET LOCAL ROLE rr_adapter;
+SELECT is((SELECT activity_id FROM robot_runtime.claim_effects('mock','arm','r1','other',:fence2,1)),:'eligible'::uuid,'blocked claimed and ambiguous lanes do not starve a later activity');
+RESET ROLE;
+SELECT is((SELECT count(*) FROM robot_runtime.effect_outbox WHERE activity_id IN (:'blocked1',:'blocked2') AND status='pending'),2::bigint,'blocked lane successors remain pending');
+
 SELECT * FROM finish();
 ROLLBACK;

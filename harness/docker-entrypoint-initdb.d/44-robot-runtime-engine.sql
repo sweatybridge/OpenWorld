@@ -186,6 +186,12 @@ BEGIN
     SELECT * INTO STRICT d FROM robot_runtime.activity_definition WHERE name=a.definition_name AND version=a.definition_version;
     reducer_oid:=to_regprocedure(d.reducer_signature);
     IF reducer_oid IS NULL OR md5(pg_get_functiondef(reducer_oid))<>d.reducer_fingerprint THEN RAISE EXCEPTION 'registered reducer changed'; END IF;
+    -- Ownership and role attributes are not part of pg_get_functiondef.
+    IF NOT EXISTS (SELECT FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+      WHERE p.oid=reducer_oid AND r.rolname=d.owner AND NOT r.rolsuper
+        AND NOT r.rolbypassrls AND r.rolname NOT LIKE 'robot_runtime_%') THEN
+      RAISE EXCEPTION 'registered reducer owner changed or became privileged';
+    END IF;
     SELECT ns.nspname,p.proname INTO n,f FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace WHERE p.oid=reducer_oid;
     EXECUTE format('SELECT r.* FROM %I.%I($1,$2,$3) r',n,f) INTO tr USING a.state,
       ROW(i.id,i.kind,1,i.payload,i.source,i.message_id,i.observed_at,i.expires_at)::robot_runtime.intent,

@@ -28,6 +28,9 @@ BEGIN
   INSERT INTO robot_runtime.capability_resource(adapter,capability,resource_key) VALUES(p_adapter,p_capability,p_resource_key) ON CONFLICT DO NOTHING;
   PERFORM 1 FROM robot_runtime.capability_resource WHERE adapter=p_adapter AND capability=p_capability AND resource_key=p_resource_key FOR UPDATE;
   stamp:=clock_timestamp();
+  -- Holder rows are transient; the resource retains the monotonic fence.
+  DELETE FROM robot_runtime.capability_lease WHERE adapter=p_adapter AND capability=p_capability
+    AND resource_key=p_resource_key AND expires_at<=stamp;
   SELECT * INTO l FROM robot_runtime.capability_lease WHERE adapter=p_adapter AND capability=p_capability AND resource_key=p_resource_key AND gateway=p_gateway;
   IF FOUND AND l.expires_at>stamp THEN
     IF l.mode<>p_mode THEN RAISE EXCEPTION 'cannot change live lease mode'; END IF;
@@ -63,7 +66,9 @@ BEGIN
   -- The activity lock is also the serialization point with lifecycle barriers.
   FOR a IN SELECT * FROM robot_runtime.activity_instance x WHERE NOT barrier_pending AND EXISTS
     (SELECT FROM robot_runtime.effect_outbox y WHERE y.activity_id=x.id AND y.status='pending' AND y.adapter=p_adapter AND y.capability=p_capability AND y.resource_key=p_resource_key)
-    ORDER BY id FOR UPDATE SKIP LOCKED LIMIT p_limit LOOP
+    -- Count claims, not candidate activities: blocked lanes must not consume
+    -- the batch limit and starve eligible work in later activities.
+    ORDER BY id FOR UPDATE SKIP LOCKED LOOP
     PERFORM 1 FROM robot_runtime.capability_resource WHERE adapter=p_adapter AND capability=p_capability AND resource_key=p_resource_key FOR UPDATE;
     SELECT * INTO l FROM robot_runtime.capability_lease WHERE adapter=p_adapter AND capability=p_capability AND resource_key=p_resource_key AND gateway=p_gateway AND fence=p_fence AND expires_at>clock_timestamp();
     IF NOT FOUND THEN RAISE EXCEPTION 'capability lease is stale'; END IF;
