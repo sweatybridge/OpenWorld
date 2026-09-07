@@ -100,6 +100,15 @@ The LLM sees these database-native tools (schemas are introsducted from the
   Media bytes are produced server-side and never enter the model context.
 - `SEND_ATTACHMENT`: send media (image/audio/video) you already hold as inline
   bytes (base64/hex + encoding) as a Telegram attachment; kind is auto-detected.
+- `GENERATE_VIDEO`: generate a short video clip via a configured
+  stable-diffusion.cpp sdcpp server (`POST /sdcpp/v1/vid_gen`, async job
+  polling) and send it as a Telegram attachment. The model passes a prompt (plus
+  optional `width`, `height`, `video_frames`, `fps`, `seed`, `output_format`
+  `webm`/`webp`/`avi`, and `init_image`/`end_image` for image-to-video); the
+  clip is produced server-side and queued for delivery — only a small summary
+  returns. WebM, WebP, and AVI are sent as documents because Telegram's
+  `sendVideo` method requires MPEG-4. Requires `OPENWORLD_SDCPP_API_BASE` and
+  the sdcpp host to be in pg_durable's HTTP egress allowlist.
 - `SQL`: run a single SQL query that returns rows.
 
 `BASH` uses the `pg_ssh` extension's `ssh.exec(host_name, command)` function.

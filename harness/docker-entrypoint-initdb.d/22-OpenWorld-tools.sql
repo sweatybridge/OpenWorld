@@ -880,6 +880,248 @@ END;
 $$;
 COMMENT ON FUNCTION ow_tools._tool_webfetch(text, integer) IS 'Fetch an HTTP or HTTPS URL and return status, content type, effective URL, and a truncated text body.';
 
+-- ============================================================================
+-- GENERATE_VIDEO: async video generation via the stable-diffusion.cpp sdcpp API
+--   (POST /sdcpp/v1/vid_gen -> poll GET /sdcpp/v1/jobs/{id} -> deliver the
+--   encoded container). Agent-scoped config (seeded from env like exa_api_key):
+--     sdcpp_api_base  e.g. http://localhost:8080   (REQUIRED)
+--     sdcpp_api_key   optional Bearer token
+--   The graph submits the job, polls until terminal in a df.loop with df.sleep,
+--   then queues the returned base64 container as a Telegram-compatible
+--   attachment via queue_outbound_attachment — so the video bytes never enter
+--   the model context, only a small JSON summary does. When this tool is
+--   present in a turn, start_tool_calls raises await_tool_calls' per-turn
+--   timeout to 600s (see start_tool_calls), since short clips can take minutes.
+--   The sdcpp endpoint host must be in pg_durable's HTTP egress allowlist.
+-- ============================================================================
+
+-- True when a GET /sdcpp/v1/jobs/{id} df.http envelope is terminal: the call
+-- did not succeed (ok absent/false, e.g. 404/410 gone) OR the parsed job body
+-- status is completed / failed / cancelled. Pure (HTTP envelope jsonb only).
+CREATE OR REPLACE FUNCTION ow_tools._sdcpp_job_terminal(p_envelope jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT coalesce(NOT coalesce((p_envelope->>'ok')::boolean, false), false)
+      OR coalesce(ow._http_body_json(p_envelope)->>'status', '')
+         IN ('completed', 'failed', 'cancelled')
+$$;
+
+-- Build the absolute poll URL for a vid_gen submission: parse poll_url out of
+-- the 202 response body and prefix the configured sdcpp base. Pure. Raises when
+-- the submission returned no poll_url (caller surfaces it as a tool error).
+CREATE OR REPLACE FUNCTION ow_tools._sdcpp_job_url(p_base text, p_envelope jsonb)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_poll text := ow._http_body_json(p_envelope)->>'poll_url';
+BEGIN
+  IF v_poll IS NULL OR v_poll = '' THEN
+    RAISE EXCEPTION 'vid_gen submission returned no poll_url';
+  END IF;
+  RETURN rtrim(coalesce(p_base, ''), '/') || v_poll;
+END;
+$$;
+
+-- Terminal-job handler for the polling loop. On a completed job, decode the
+-- returned base64 container and queue it as a Telegram-compatible attachment
+-- (queue_outbound_attachment, SECURITY DEFINER owner ow_agent_primary,
+-- self-resolves chat_id when NULL). Telegram sendVideo accepts MPEG-4, so the
+-- current sdcpp outputs (WebM/WebP/AVI) use sendDocument instead. On failed /
+-- cancelled / missing bytes it returns an error summary WITHOUT raising, so the
+-- turn continues and the model sees what went wrong. p_chat_id is captured from
+-- the originating tool-call context at graph-build time and baked into the node.
+-- The polling node runs in a fresh transaction, so the completed path rebinds
+-- agent context before queueing.
+CREATE OR REPLACE FUNCTION ow_tools._sdcpp_finalize_video(
+  p_agent_slug text,
+  p_envelope jsonb,
+  p_caption text DEFAULT '',
+  p_filename text DEFAULT '',
+  p_chat_id text DEFAULT ''
+)
+RETURNS text
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_job jsonb := ow._http_body_json(p_envelope);
+  v_status text := coalesce(v_job->>'status', '');
+  v_result jsonb;
+  v_b64 text;
+  v_mime text;
+  v_fmt text;
+  v_ext text;
+  v_filename text;
+  v_kind text;
+BEGIN
+  IF v_status <> 'completed' THEN
+    RETURN jsonb_build_object(
+      'queued', false,
+      'status', v_status,
+      'http_status', ow._http_status(p_envelope),
+      'error', v_job->'error',
+      'body', left(coalesce(p_envelope->>'body', ''), 300)
+    )::text;
+  END IF;
+
+  v_result := v_job->'result';
+  v_b64 := coalesce(v_result->>'b64_json', '');
+  IF v_b64 = '' THEN
+    RETURN jsonb_build_object(
+      'queued', false, 'status', 'completed',
+      'error', jsonb_build_object('code', 'no_video', 'message', 'completed job returned no b64_json')
+    )::text;
+  END IF;
+
+  v_fmt  := coalesce(v_result->>'output_format', 'webm');
+  v_mime := coalesce(v_result->>'mime_type', CASE v_fmt WHEN 'webp' THEN 'image/webp' WHEN 'avi' THEN 'video/x-msvideo' ELSE 'video/webm' END);
+  v_ext  := CASE v_fmt WHEN 'webp' THEN 'webp' WHEN 'avi' THEN 'avi' ELSE 'webm' END;
+  v_filename := coalesce(nullif(p_filename, ''), 'generated_video.' || v_ext);
+  v_kind := CASE WHEN lower(v_mime) = 'video/mp4' THEN 'video' ELSE 'document' END;
+
+  PERFORM set_config('ow.current_agent_id', ow.agent_id(p_agent_slug)::text, true);
+  PERFORM ow.queue_outbound_attachment(
+    p_agent_slug, v_b64, v_kind, v_filename,
+    nullif(p_caption, ''), v_mime, nullif(p_chat_id, ''));
+
+  RETURN jsonb_build_object(
+    'queued', true,
+    'delivered', v_kind,
+    'status', 'completed',
+    'frame_count', nullif(v_result->>'frame_count', '')::integer,
+    'fps', nullif(v_result->>'fps', '')::integer,
+    'output_format', v_fmt,
+    'mime_type', v_mime
+  )::text;
+END;
+$$;
+
+-- Build a tool result for a non-202 vid_gen submission (4xx/other). Pure.
+CREATE OR REPLACE FUNCTION ow_tools._sdcpp_error_result(p_envelope jsonb)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+BEGIN
+  RETURN jsonb_build_object(
+    'queued', false,
+    'error', 'vid_gen submission failed',
+    'http_status', ow._http_status(p_envelope),
+    'body', left(coalesce(p_envelope->>'body', ''), 500)
+  )::text;
+END;
+$$;
+
+-- GENERATE_VIDEO graph builder. Reads sdcpp config and the originating chat
+-- context at BUILD time (the GUCs are bound by start_tool_calls/tool_call_future)
+-- and bakes endpoint, headers, slug, chat_id and the vid_gen request body into
+-- the graph text as literals — no graph node does an agent-scoped config read.
+-- Introspected as the LLM-facing GENERATE_VIDEO schema. Returns a df graph text
+-- (like SEARCH/WEBFETCH), or a single-node error result text when
+-- sdcpp_api_base is unset.
+CREATE OR REPLACE FUNCTION ow_tools._tool_generate_video(
+  p_prompt text,
+  p_negative_prompt text DEFAULT '',
+  p_width integer DEFAULT 832,
+  p_height integer DEFAULT 480,
+  p_strength double precision DEFAULT 0.75,
+  p_seed integer DEFAULT -1,
+  p_video_frames integer DEFAULT 33,
+  p_fps integer DEFAULT 16,
+  p_output_format text DEFAULT 'webm',
+  p_init_image text DEFAULT '',
+  p_end_image text DEFAULT '',
+  p_caption text DEFAULT '',
+  p_filename text DEFAULT ''
+)
+RETURNS text
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ow, ow_tools, public, pg_temp
+AS $$
+DECLARE
+  v_agent_id bigint := nullif(current_setting('ow.current_agent_id', true), '')::bigint;
+  v_slug text;
+  v_base text;
+  v_key text;
+  v_chat_id text := nullif(current_setting('ow.current_chat_id', true), '');
+  v_headers jsonb;
+  v_headers_text text;
+  v_body jsonb;
+  v_body_text text;
+  v_vid_url text;
+  v_poll_interval integer := 3;
+BEGIN
+  IF btrim(coalesce(p_prompt, '')) = '' THEN
+    RETURN format('SELECT %L::text AS result', 'error: GENERATE_VIDEO requires prompt');
+  END IF;
+
+  IF v_agent_id IS NULL THEN
+    RETURN format('SELECT %L::text AS result', 'error: GENERATE_VIDEO has no current agent context');
+  END IF;
+
+  v_base := ow._config_text(v_agent_id, 'sdcpp_api_base');
+  IF v_base IS NULL OR btrim(v_base) = '' THEN
+    RETURN format('SELECT %L::text AS result', 'error: GENERATE_VIDEO requires sdcpp_api_base config');
+  END IF;
+
+  SELECT slug INTO v_slug FROM ow.agents WHERE id = v_agent_id;
+
+  v_key := ow._config_text(v_agent_id, 'sdcpp_api_key');
+  v_headers := jsonb_build_object('Content-Type', 'application/json', 'Accept', 'application/json');
+  IF v_key IS NOT NULL AND v_key <> '' THEN
+    v_headers := v_headers || jsonb_build_object('Authorization', 'Bearer ' || v_key);
+  END IF;
+  v_headers_text := v_headers::text;
+
+  -- Native sdcpp vid_gen request; omitted sample_params fall back to backend
+  -- defaults (see api.md "Optional Field Handling"). init_image/end_image, when
+  -- supplied (base64 or data: URL), drive image-to-video; omitted => txt2video.
+  v_body := jsonb_strip_nulls(jsonb_build_object(
+    'prompt', p_prompt,
+    'negative_prompt', nullif(p_negative_prompt, ''),
+    'width', p_width,
+    'height', p_height,
+    'strength', p_strength,
+    'seed', p_seed,
+    'video_frames', p_video_frames,
+    'fps', p_fps,
+    'clip_skip', -1,
+    'output_format', nullif(p_output_format, ''),
+    'init_image', nullif(p_init_image, ''),
+    'end_image', nullif(p_end_image, '')
+  ));
+  v_body_text := v_body::text;
+  v_vid_url := rtrim(v_base, '/') || '/sdcpp/v1/vid_gen';
+
+  RETURN format(
+    $graph$SELECT %L::text AS req |=> 'req'
+~> df.http(%L, 'POST', '$req', %L::jsonb, 30) |=> 'submit'
+~> df.if(
+     'SELECT $submit.ok',
+     SELECT ow_tools._sdcpp_job_url(%L, $submit::jsonb)::text AS purl |=> 'purl'
+     ~> df.loop(
+          df.http('$purl', 'GET', '', %L::jsonb, 30) |=> 'job'
+          ~> df.if(
+               'SELECT ow_tools._sdcpp_job_terminal($job::jsonb)',
+               df.break('$job'),
+               df.sleep(%s)
+             )
+        ) |=> 'final'
+     ~> SELECT ow_tools._sdcpp_finalize_video(%L, $final::jsonb, %L, %L, %L)::text AS result,
+     SELECT ow_tools._sdcpp_error_result($submit::jsonb)::text AS result
+   )$graph$,
+    v_body_text, v_vid_url, v_headers_text,
+    v_base, v_headers_text, v_poll_interval,
+    v_slug, coalesce(p_caption, ''), coalesce(p_filename, ''), coalesce(v_chat_id, '')
+  );
+END;
+$$;
+COMMENT ON FUNCTION ow_tools._tool_generate_video(text, text, integer, integer, double precision, integer, integer, integer, text, text, text, text, text) IS 'Generate a short video clip via the stable-diffusion.cpp sdcpp API and send it as a Telegram attachment. Parameters: prompt (required), negative_prompt, width, height, strength, seed (-1 random), video_frames (effective length is normalized to the largest 4n+1 <= requested), fps, output_format (webm|webp|avi; default webm), init_image / end_image (base64 or data: URL for image-to-video; omit for text-to-video), caption, filename. WebM/WebP/AVI use sendDocument because Telegram sendVideo requires MPEG-4. The clip is produced server-side and queued for delivery — only a small summary returns. Requires agent sdcpp_api_base config.';
+
 -- Run one synchronous tool's WORK under the acting role (SET ROLE + GUCs), then
 -- RESET. SECURITY INVOKER — SET ROLE is forbidden inside SECURITY DEFINER. The
 -- instance that calls this is submitted by ow_service; we drop to the
@@ -995,6 +1237,26 @@ BEGIN
       coalesce(p_args->>'query', ''),
       CASE WHEN v_limit ~ '^[0-9]+$' THEN v_limit::integer ELSE 5 END
     );
+  ELSIF p_name = 'GENERATE_VIDEO' THEN
+    -- Numeric field safe-parse mirrors SEARCH/WEBFETCH: a malformed value falls
+    -- back to the function default rather than aborting the whole turn. Bind the
+    -- originating chat so the graph cannot drift to another concurrent chat.
+    PERFORM set_config('ow.current_chat_id', coalesce(p_chat_id, ''), true);
+    RETURN ow_tools._tool_generate_video(
+      coalesce(p_args->>'prompt', ''),
+      coalesce(p_args->>'negative_prompt', ''),
+      CASE WHEN (p_args->>'width') ~ '^[0-9]+$' THEN (p_args->>'width')::integer ELSE 832 END,
+      CASE WHEN (p_args->>'height') ~ '^[0-9]+$' THEN (p_args->>'height')::integer ELSE 480 END,
+      CASE WHEN (p_args->>'strength') ~ '^[0-9]+(\.[0-9]+)?$' THEN (p_args->>'strength')::float8 ELSE 0.75 END,
+      CASE WHEN (p_args->>'seed') ~ '^-?[0-9]+$' THEN (p_args->>'seed')::integer ELSE -1 END,
+      CASE WHEN (p_args->>'video_frames') ~ '^[0-9]+$' THEN (p_args->>'video_frames')::integer ELSE 33 END,
+      CASE WHEN (p_args->>'fps') ~ '^[0-9]+$' THEN (p_args->>'fps')::integer ELSE 16 END,
+      coalesce(p_args->>'output_format', 'webm'),
+      coalesce(p_args->>'init_image', ''),
+      coalesce(p_args->>'end_image', ''),
+      coalesce(p_args->>'caption', ''),
+      coalesce(p_args->>'filename', '')
+    );
   END IF;
 
   -- synchronous tools run as the acting role
@@ -1009,7 +1271,9 @@ $$;
 
 -- Orchestrator for an assistant message's tool calls, split across TWO graph
 -- nodes so the per-call durable instances actually run:
---   start_tool_calls: df.start every call (parallel), return [{id,tc_id},...].
+--   start_tool_calls: df.start every call (parallel), return
+--     {"calls":[{id,tc_id},...],"timeout":N} (timeout is 600 when the batch
+--     contains a GENERATE_VIDEO, else 120; await_tool_calls honors it).
 --     Its transaction commits when the node ends, so workers can SEE and run the
 --     instances. (Starting and awaiting in the SAME node left the starts
 --     uncommitted in that node's transaction, so no worker picked them up and
@@ -1040,6 +1304,7 @@ DECLARE
   v_future text;
   v_tc text;
   v_started jsonb := '[]'::jsonb;
+  v_timeout integer;
 BEGIN
   -- Bind agent context so the SEARCH graph builder (_tool_search) can read the
   -- agent's own secret config (exa_api_key) under RLS. The synchronous tools
@@ -1066,7 +1331,16 @@ BEGIN
     );
   END LOOP;
 
-  RETURN v_started::text;
+  -- GENERATE_VIDEO submits + polls an sdcpp async job; clips can take minutes,
+  -- so when one is in the batch raise await_tool_calls' per-turn timeout from
+  -- the 120s default to 600s. The timeout rides alongside the started calls so
+  -- await_tool_calls honors it without a signature change.
+  v_timeout := CASE WHEN EXISTS (
+      SELECT 1 FROM jsonb_array_elements(coalesce(p_tool_calls, '[]'::jsonb)) c
+      WHERE c #>> '{function,name}' = 'GENERATE_VIDEO'
+    ) THEN 600 ELSE 120 END;
+
+  RETURN jsonb_build_object('calls', v_started, 'timeout', v_timeout)::text;
 END;
 $$;
 
@@ -1105,6 +1379,8 @@ SET search_path = ow, ow_tools, public, pg_temp
 AS $$
 DECLARE
   v_agent_id bigint := ow.agent_id(p_agent_slug);
+  v_started_obj jsonb;
+  v_calls jsonb;
   v_item jsonb;
   v_id text;
   v_tcid text;
@@ -1112,15 +1388,24 @@ DECLARE
   v_result text;
   v_deadline timestamptz;
   v_count integer := 0;
+  v_timeout integer;
 BEGIN
-  FOR v_item IN SELECT value FROM jsonb_array_elements(
-    coalesce(ow._try_jsonb(p_started), '[]'::jsonb)
-  )
+  -- start_tool_calls may now return {"calls":[...],"timeout":N} (when the batch
+  -- holds a long-running GENERATE_VIDEO) instead of a bare array. Keep bare
+  -- arrays working (older callers / tests) by falling back to p_timeout.
+  v_started_obj := ow._try_jsonb(p_started);
+  v_calls := CASE jsonb_typeof(v_started_obj)
+              WHEN 'array'  THEN v_started_obj
+              WHEN 'object' THEN coalesce(v_started_obj->'calls', '[]'::jsonb)
+              ELSE '[]'::jsonb END;
+  v_timeout := coalesce(nullif(v_started_obj->>'timeout', '')::integer, p_timeout);
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(v_calls)
   LOOP
     v_count := v_count + 1;
     v_id := v_item->>'id';
     v_tcid := v_item->>'tc_id';
-    v_deadline := clock_timestamp() + make_interval(secs => p_timeout);
+    v_deadline := clock_timestamp() + make_interval(secs => v_timeout);
     v_status := NULL;
     LOOP
       BEGIN
