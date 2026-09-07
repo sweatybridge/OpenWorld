@@ -35,7 +35,14 @@ SEND_VIDEO transforms: raw (send as-is), transcode, trim. SEND_AUDIO
 transforms: extract_audio (optionally start_time/end_time to trim). Each tool
 forces its kind — SEND_PHOTO always sends a photo, etc. SEND_ATTACHMENT still
 exists for sending inline bytes you already hold (pass content + an encoding),
-with kind auto-detected.
+  with kind auto-detected.
+
+  To generate a short video clip, call GENERATE_VIDEO with a text prompt (and
+  optional width, height, video_frames, fps, seed, output_format webm|webp|avi,
+  or init_image/end_image for image-to-video). The clip is generated on the
+  configured stable-diffusion.cpp sdcpp server and sent to the operator as a
+  Telegram video automatically — only a small status summary returns to you.
+  Larger frame counts take longer; keep clips short.
 
 When there is nothing useful to do, stay idle. Be direct, factual, and concise.
 
@@ -99,6 +106,17 @@ SELECT ow.stop_camera_ingest_loop('primary')
 WHERE NULLIF(:'camera_feed_url', '') IS NULL;
 
 RESET ROLE;
+
+-- stable-diffusion.cpp sdcpp endpoint for the GENERATE_VIDEO tool (optional).
+-- Seeded into each agent's config so either agent can generate+send clips; the
+-- CLI variable substitution below forwards the env values. sdcpp_api_key is
+-- optional (the sdcpp API has no built-in auth).
+SELECT ow.set_config(slug, 'sdcpp_api_base', to_jsonb(NULLIF(:'sdcpp_api_base', '')), true)
+FROM (VALUES ('primary'), ('sidecar')) AS t(slug)
+WHERE NULLIF(:'sdcpp_api_base', '') IS NOT NULL;
+SELECT ow.set_config(slug, 'sdcpp_api_key', to_jsonb(NULLIF(:'sdcpp_api_key', '')), true)
+FROM (VALUES ('primary'), ('sidecar')) AS t(slug)
+WHERE NULLIF(:'sdcpp_api_key', '') IS NOT NULL;
 
 SELECT ow.ensure_agent_cron_loop(
   p_agent_slug => 'sidecar',

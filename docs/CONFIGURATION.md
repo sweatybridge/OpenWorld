@@ -27,6 +27,8 @@ docker compose run --rm agent-init
 | `OPENWORLD_POSTGRES_PASSWORD` | Password for the local Postgres container. | `postgres` |
 | `OPENWORLD_API_KEY` | Required LLM key for agent turns. | empty |
 | `OPENWORLD_EXA_API_KEY` | Optional key for the `SEARCH` tool. | empty |
+| `OPENWORLD_SDCPP_API_BASE` | Optional base URL of a stable-diffusion.cpp sdcpp server for the `GENERATE_VIDEO` tool (e.g. `http://localhost:8080`). The host must be reachable from Postgres and in pg_durable's HTTP egress allowlist. | empty |
+| `OPENWORLD_SDCPP_API_KEY` | Optional bearer token for the sdcpp server. | empty |
 | `OPENWORLD_MODEL` | Shared model name seeded into `ow.models`. | `Gemma4-26B-A4B` |
 | `OPENWORLD_API_BASE` | API base for the shared model. | `http://localhost:11434/v1` |
 | `OPENWORLD_TEMPERATURE` | Shared model temperature. | `1.0` |
