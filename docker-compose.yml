@@ -17,6 +17,25 @@ services:
       retries: 20
       start_period: 5s
 
+  # Bootstrap only: all ongoing scheduling runs inside pg_durable. The initial
+  # temporary PostgreSQL server may finish schema installation before its durable
+  # worker is ready; retry here without making database initialization fail.
+  runtime-init:
+    image: postgres:18-trixie
+    depends_on:
+      harness:
+        condition: service_healthy
+    restart: on-failure
+    environment:
+      PGHOST: harness
+      PGUSER: postgres
+      PGPASSWORD: ${OPENWORLD_POSTGRES_PASSWORD:-postgres}
+    command:
+      - psql
+      - --no-psqlrc
+      - --set=ON_ERROR_STOP=1
+      - --command=SELECT robot_runtime.ensure_scheduler();
+
   agent-init:
     image: postgres:18-trixie
     depends_on:

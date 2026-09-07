@@ -10,6 +10,8 @@ services:
       target: pgtap
     environment:
       POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./tests:/tests:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
       interval: 3s

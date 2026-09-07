@@ -13,6 +13,11 @@ and debugging.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details on the design
 philosophy, execution model, and access permission matrix.
 
+The `robot_runtime` SQL schema adds durable, hardware-neutral activities with
+serialized intents, reducer transitions, timers, and leased adapter effects.
+Its scheduler runs through `pg_durable`. See [the runtime guide](docs/ROBOT_RUNTIME.md)
+for installation, reducer contracts, adapter APIs, and recovery behavior.
+
 ## Getting started
 
 Copy the example environment file, adjust any values you need, and start the

@@ -21,6 +21,7 @@ on:
       - "harness/Dockerfile"
       - "tests/**"
       - "docker-compose.test.yml"
+      - "docker-compose.yml"
       - ".github/workflows/pgtap.yml"
   pull_request:
     paths:
@@ -28,6 +29,7 @@ on:
       - "harness/Dockerfile"
       - "tests/**"
       - "docker-compose.test.yml"
+      - "docker-compose.yml"
       - ".github/workflows/pgtap.yml"
   workflow_dispatch:
 
@@ -60,3 +62,6 @@ jobs:
       # suite result, so a failing assertion fails the step.
       - name: Run pgTAP suite
         run: docker compose -f docker-compose.test.yml run --rm -T pgtap
+
+      - name: Verify SQL runtime workers and recovery
+        run: bash tests/robot-runtime-e2e.sh
